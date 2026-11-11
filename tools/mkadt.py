@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the minimal Apple Device Tree that the SWEET xnu needs to boot.
+"""Build the minimal Apple Device Tree that the MT6781 xnu needs to boot.
 
 Only what the early boot path actually reads (see NOTES.md); every MMIO
 address comes from the sweet live FDT. Usage:  mkadt.py OUT.adt [--dump] [--qemu] [--highmem] [--viva [--ufs]] [--canvas=WxH]
@@ -29,7 +29,7 @@ SOC_BASE = 0x01000000
 GICD, GICD_SIZE = 0x17a00000, 0x10000
 GICR, GICR_SIZE = 0x17a60000, 0x100000
 FB, FB_SIZE = 0x9c000000, 0x1700000
-SWEET_ECID = 0x5357454554000001  # 'SWEET' + 1, synthetic
+MAPPLE_ECID = 0x5357454554000001  # 'MT6781' + 1, synthetic
 FB_W, FB_H, FB_STRIDE = 1080, 2400, 1080 * 4
 # Internal UFS host (ufshc@1d84000 "ufs_mem"); QEMU virt has none
 UFS, UFS_SIZE = 0x01d84000, 0x3000
@@ -40,23 +40,23 @@ QEMU_GICD, QEMU_GICR, QEMU_TIMEBASE = 0x08000000, 0x080a0000, 62500000
 QEMU_VTIMER_INTID = 27
 
 # --canvas=WxH: the display size IOMobileFramebuffer reads from /arm-io/disp0 (default the presented iPhone X
-# size 1125x2436; must match what AppleCLCD reports: 1080x2400 with boot-arg sweetfb_native=1).
+# size 1125x2436; must match what AppleCLCD reports: 1080x2400 with boot-arg mp_fb_native=1).
 CANVAS = [1125, 2436]
 # --viva: Redmi Note 11 Pro 4G (MT6781). RAM is 0x40000000-0x1c0000000; every
 # LK mblock reservation is below 0xc0000000 except dramc-rk1 at 0x1bffff000.
 # start.s maps kernel RAM with 32MB cacheable blocks, so the range stops at the
 # last 32MB boundary below dramc-rk1. Addresses from the viva DTB and the
 # on-device probe (README of ios-viva).
-VIVA_PHYS_BASE, VIVA_MEM_SIZE = 0xc0000000, 0x1be000000 - 0xc0000000
-VIVA_GICD, VIVA_GICD_SIZE = 0x0c000000, 0x40000
-VIVA_GICR, VIVA_GICR_SIZE = 0x0c040000, 0x200000
-VIVA_FB, VIVA_FB_STRIDE = 0x7bc10000, 1088 * 4
-VIVA_FB_SIZE = (VIVA_FB_STRIDE * 2400 + 0x3fff) & ~0x3fff
-VIVA_TIMEBASE = 13000000
-VIVA_VTIMER_INTID = 27  # DT timer <GIC_PPI 11>, the standard virtual timer
-VIVA_ECID = 0x5649564100000001  # 'VIVA' + 1, synthetic
+MAPPLE_PHYS_BASE, MAPPLE_MEM_SIZE = 0xc0000000, 0x1be000000 - 0xc0000000
+MAPPLE_GICD, MAPPLE_GICD_SIZE = 0x0c000000, 0x40000
+MAPPLE_GICR, MAPPLE_GICR_SIZE = 0x0c040000, 0x200000
+MAPPLE_FB, MAPPLE_FB_STRIDE = 0x7bc10000, 1088 * 4
+MAPPLE_FB_SIZE = (MAPPLE_FB_STRIDE * 2400 + 0x3fff) & ~0x3fff
+MAPPLE_TIMEBASE = 13000000
+MAPPLE_VTIMER_INTID = 27  # DT timer <GIC_PPI 11>, the standard virtual timer
+MAPPLE_ECID = 0x5649564100000001  # 'VIVA' + 1, synthetic
 # MediaTek ufshci@11270000 (DT size 0x2300, one 16K page)
-VIVA_UFS, VIVA_UFS_SIZE = 0x11270000, 0x4000
+MAPPLE_UFS, MAPPLE_UFS_SIZE = 0x11270000, 0x4000
 
 BOOT_MANIFEST_HASH = hashlib.sha384(b'sweet boot manifest').digest()
 
@@ -93,7 +93,7 @@ def node(name, props=(), children=()):
     return n
 
 
-# Linux IRQ_TYPE_* in the second interrupt cell (SweetGIC.cpp)
+# Linux IRQ_TYPE_* in the second interrupt cell (MappleGIC.cpp)
 IRQ_EDGE_RISING, IRQ_EDGE_FALLING, IRQ_LEVEL_HIGH = 1, 2, 4
 # HID consumer-page usages (IOHIDUsageTables.h)
 HID_CSMR_POWER, HID_CSMR_VOLUME_UP, HID_CSMR_VOLUME_DOWN = 0x30, 0xe9, 0xea
@@ -109,12 +109,12 @@ def wifi_mac(ecid):
     return bytes([0x02]) + struct.pack('>Q', ecid)[3:7] + b'\x01'
 
 
-def viva_devices(ph, phandle, gic_ph, ecid):
+def mapple_devices(ph, phandle, gic_ph, ecid):
     """viva /arm-io devices with their own IOKit drivers (addresses and SPIs from the viva DTB)."""
     io = lambda pa, size: u64(pa - SOC_BASE, size)
     eint_ph = next(phandle)
     return [
-        # MediaTek keypad (kp@10010000, SPI 73 edge): iokit/Kernel/arm/hid/VivaKeypad.cpp.
+        # MediaTek keypad (kp@10010000, SPI 73 edge): iokit/Kernel/arm/hid/MTKKeypad.cpp.
         # keymap = <bit usage> pairs (HID consumer page). Volume down is kpd-hw-init-map
         # index 0 = bit 0 (measured 2026-11-03); power and volume up are PMIC keys.
         node('keypad', [
@@ -125,7 +125,7 @@ def viva_devices(ph, phandle, gic_ph, ecid):
             ('interrupts', spi(0x49, IRQ_EDGE_RISING)),
             ('keymap', u32(0, HID_CSMR_VOLUME_DOWN)),
         ]),
-        # External interrupts (eint@1000b000, GIC SPI 186 level): iokit/Kernel/arm/VivaEINT.cpp,
+        # External interrupts (eint@1000b000, GIC SPI 186 level): iokit/Kernel/arm/MTKEINT.cpp,
         # an interrupt controller under the GIC; children use interrupts = <EINT flags>.
         node('eint', [
             ('AAPL,phandle', u32(eint_ph)),
@@ -136,8 +136,8 @@ def viva_devices(ph, phandle, gic_ph, ecid):
             ('interrupt-parent', u32(gic_ph)),
             ('interrupts', spi(0xba, IRQ_LEVEL_HIGH)),
         ]),
-        # PMIC wrapper (pwrap@1000d000): iokit/Kernel/arm/VivaPwrap.cpp, a bus for the MT6366
-        # (VivaPMIC.cpp, interrupt EINT 144 level high) and its key inputs (hid/VivaPMICKeys.cpp:
+        # PMIC wrapper (pwrap@1000d000): iokit/Kernel/arm/MTKPwrap.cpp, a bus for the MT6366
+        # (MT6358PMIC.cpp, interrupt EINT 144 level high) and its key inputs (hid/MT6358Keys.cpp:
         # keymap <key usage>, key 0 PWRKEY = power, 1 HOMEKEY = volume up).
         node('pwrap', [
             ph(),
@@ -153,7 +153,7 @@ def viva_devices(ph, phandle, gic_ph, ecid):
             ('compatible', cstr('mediatek,mt6366-keys')),
             ('keymap', u32(0, HID_CSMR_POWER, 1, HID_CSMR_VOLUME_UP)),
         ])])]),
-        # GPIO (gpio@10005000): iokit/Kernel/arm/VivaIO.cpp. Only these pins can be driven:
+        # GPIO (gpio@10005000): iokit/Kernel/arm/MTKIO.cpp. Only these pins can be driven:
         # the GT9896's reset (17), dvdd (73) and avdd (166) switches (live DT goodix,*-gpio).
         node('gpio', [
             ph(),
@@ -161,7 +161,7 @@ def viva_devices(ph, phandle, gic_ph, ecid):
             ('reg', io(0x10005000, 0x1000)),
             ('output-pins', u32(17, 73, 166)),
         ]),
-        # I2C0 (i2c0@11007000, SPI 105 level): VivaIO.cpp, MediaTek I2C v2 in FIFO mode.
+        # I2C0 (i2c0@11007000, SPI 105 level): MTKIO.cpp, MediaTek I2C v2 in FIFO mode.
         # Source clock: CK_CFG_6 i2c_sel = 3 = univpll_d5_d2 = 2496 MHz / 2 / 5 / 2 (univ2pll
         # PCW measured 2026-11-03), divided by clock-div 5. SCL0/SDA0 pin mux is left as LK set it.
         node('i2c0', [
@@ -175,7 +175,7 @@ def viva_devices(ph, phandle, gic_ph, ecid):
             ('clock-div', u32(5)),
             ('ext-time-config', u32(0x1801)),
         ], [
-            # Goodix GT9896 touch (gt9896@5d): hid/VivaGT9896.cpp; interrupt EINT 13 falling edge.
+            # Goodix GT9896 touch (gt9896@5d): hid/GT9896.cpp; interrupt EINT 13 falling edge.
             node('touch', [
                 ph(),
                 ('compatible', cstr('goodix,gt9896')),
@@ -196,7 +196,7 @@ def viva_devices(ph, phandle, gic_ph, ecid):
         ]),
         # I2C3 (i2c3@1100f000, SPI 108 level, 400 kHz, same source clock as I2C0): the battery bus. LK
         # charges through it, so it is normally clocked; reg 1 + imp-cg-bit = its IMP_IIC_WRAP gate
-        # (clk-mt6781.c imp_ap_i2c3, STA 0xe00 / CLR 0xe04 bit 3), opened by VivaI2C if closed.
+        # (clk-mt6781.c imp_ap_i2c3, STA 0xe00 / CLR 0xe04 bit 3), opened by MTKI2C if closed.
         node('i2c3', [
             ph(),
             ('compatible', cstr('mediatek,mt6781-i2c')),
@@ -211,7 +211,7 @@ def viva_devices(ph, phandle, gic_ph, ecid):
             ('ext-time-config', u32(0x1801)),
         ], [
             # TI bq27z561 fuel gauge (0x55) + Silergy SYV690 charger (0x6a, INT = EINT 11 falling):
-            # iokit/Kernel/arm/VivaBattery.cpp, the IOPMPowerSource. Charge limits: the live DT's
+            # iokit/Kernel/arm/BQ27Z561Battery.cpp, the IOPMPowerSource. Charge limits: the live DT's
             # syv690 safety-max-charge-voltage 4450 mV (VREG step: 4448) / safety-max-charge-current 3000 mA.
             node('battery', [
                 ph(),
@@ -226,8 +226,8 @@ def viva_devices(ph, phandle, gic_ph, ecid):
             ]),
         ]),
         # Mali-G57 MC2 (mali@13000000; GIC SPI 274/275/276 = GPU, MMU, JOB, level high; EVENT and PWR
-        # belong to ARM's kbase and stay unused): iokit/Kernel/arm/VivaGPU.cpp, started only with the
-        # boot-arg vivagpu=1|2. reg: the Mali, then the MFG power blocks it drives: mfgcfg, SPM,
+        # belong to ARM's kbase and stay unused): iokit/Kernel/arm/MappleGPU.cpp, started only with the
+        # boot-arg mp_gpu=1|2. reg: the Mali, then the MFG power blocks it drives: mfgcfg, SPM,
         # topckgen, apmixed, infracfg_ao (sequences from Xiaomi's gpufreq/clk-mt6781-pg).
         node('gpu', [
             ph(),
@@ -238,8 +238,8 @@ def viva_devices(ph, phandle, gic_ph, ecid):
             ('interrupt-parent', u32(gic_ph)),
             ('interrupts', spi(0x112, IRQ_LEVEL_HIGH) + spi(0x113, IRQ_LEVEL_HIGH) + spi(0x114, IRQ_LEVEL_HIGH)),
         ]),
-        # CONNSYS WiFi (MT6781 + MT6631): iokit/Kernel/arm/VivaWLAN.cpp (registry for configd / wifid) on top of
-        # bsd/dev/viva_wifi.c + viva_wlan.c (the station, en0). launchd starts wifid only when a node named "wlan"
+        # CONNSYS WiFi (MT6781 + MT6631): iokit/Kernel/arm/MT6631WLAN.cpp (registry for configd / wifid) on top of
+        # bsd/dev/mt6631_wifi.c + mt6631_wlan.c (the station, en0). launchd starts wifid only when a node named "wlan"
         # exists (_LimitLoadToDeviceTree); MobileGestalt reads local-mac-address here.
         node('wlan', [
             ph(),
@@ -250,23 +250,23 @@ def viva_devices(ph, phandle, gic_ph, ecid):
     ]
 
 
-def build(seed=None, qemu=False, highmem=False, viva=False, viva_ufs=False):
+def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False):
     """qemu=True: same tree, but with QEMU virt's GIC addresses and CNTFRQ (tools/qemu-sweet.py).
-    viva=True: Redmi Note 11 Pro 4G addresses. Without viva_ufs there is no UFS node, so the
+    viva=True: Redmi Note 11 Pro 4G addresses. Without mapple_ufs there is no UFS node, so the
     kernel never touches storage; with it the kernel drives the MediaTek host LK left running."""
     phys_base, mem_size = (HIGH_PHYS_BASE, HIGH_MEM_SIZE) if highmem else (PHYS_BASE, MEM_SIZE)
     if viva:
-        phys_base, mem_size = VIVA_PHYS_BASE, VIVA_MEM_SIZE
+        phys_base, mem_size = MAPPLE_PHYS_BASE, MAPPLE_MEM_SIZE
     # Carve the panic log off the top so the kernel never allocates over it.
     panic_base = phys_base + mem_size - PANIC_LOG_SIZE
     mem_size -= PANIC_LOG_SIZE
     gicd, gicr, timebase = (QEMU_GICD, QEMU_GICR, QEMU_TIMEBASE) if qemu else (GICD, GICR, TIMEBASE)
     gicd_size, gicr_size, vtimer = GICD_SIZE, GICR_SIZE, (QEMU_VTIMER_INTID if qemu else VTIMER_INTID)
-    fb, fb_size, fb_stride, ecid = FB, FB_SIZE, FB_STRIDE, SWEET_ECID
+    fb, fb_size, fb_stride, ecid = FB, FB_SIZE, FB_STRIDE, MAPPLE_ECID
     if viva:
-        gicd, gicr, timebase = VIVA_GICD, VIVA_GICR, VIVA_TIMEBASE
-        gicd_size, gicr_size, vtimer = VIVA_GICD_SIZE, VIVA_GICR_SIZE, VIVA_VTIMER_INTID
-        fb, fb_size, fb_stride, ecid = VIVA_FB, VIVA_FB_SIZE, VIVA_FB_STRIDE, VIVA_ECID
+        gicd, gicr, timebase = MAPPLE_GICD, MAPPLE_GICR, MAPPLE_TIMEBASE
+        gicd_size, gicr_size, vtimer = MAPPLE_GICD_SIZE, MAPPLE_GICR_SIZE, MAPPLE_VTIMER_INTID
+        fb, fb_size, fb_stride, ecid = MAPPLE_FB, MAPPLE_FB_SIZE, MAPPLE_FB_STRIDE, MAPPLE_ECID
     seed = seed if seed is not None else os.urandom(64)
     phandle = iter(range(1, 1000))
     ph = lambda: ('AAPL,phandle', u32(next(phandle)))
@@ -278,8 +278,8 @@ def build(seed=None, qemu=False, highmem=False, viva=False, viva_ufs=False):
         ('random-seed', seed),
         ('debug-enabled', u32(1)),
         ('embedded-panic-log-size', u32(PANIC_LOG_SIZE)),
-        ('firmware-version', cstr('viva-shim' if viva else 'sweet-shim')),
-        ('system-firmware-version', cstr('viva-shim' if viva else 'sweet-shim')),
+        ('firmware-version', cstr('mapple-shim')),
+        ('system-firmware-version', cstr('mapple-shim')),
         # iBoot's SHA-384 of the boot manifest; /sbin/mount -P 1 exits unless
         # it exists (bind mounts /private/preboot/<hex>/usr/standalone/firmware,
         # tolerating a missing directory). Fixed stand-in value.
@@ -322,7 +322,7 @@ def build(seed=None, qemu=False, highmem=False, viva=False, viva_ufs=False):
         # with CSR_ALLOW_UNRESTRICTED_FS (vm_unix.c shared region checks).
         node('asmb', [ph(), ('lp-sip0', u64(0x6f)), ('lp-sip1', u32(1))])])
 
-    # SWEET SMP: all eight cores in physical-core order (0-5 Cortex-A55,
+    # SMP: all eight cores in physical-core order (0-5 Cortex-A55,
     # 6-7 Cortex-A76), one homogeneous cluster. The kernel defaults to one
     # and uses cpus=N to select an initial prefix (N <= 8).
     # QEMU retains its original single-CPU tree: its MPIDRs differ from sweet.
@@ -351,7 +351,7 @@ def build(seed=None, qemu=False, highmem=False, viva=False, viva_ufs=False):
     cpus = node('cpus', [ph(), ('#address-cells', u32(1)),
                          ('#size-cells', u32(0))], cpu_nodes)
 
-    # SPI interrupt controller of the /arm-io nubs (iokit/Kernel/arm/SweetGIC.cpp):
+    # SPI interrupt controller of the /arm-io nubs (iokit/Kernel/arm/MappleGIC.cpp):
     # a device node has interrupt-parent = gic_ph and interrupts = <INTID flags>.
     gic_ph = next(phandle)
     gic = node('gic', [
@@ -364,8 +364,8 @@ def build(seed=None, qemu=False, highmem=False, viva=False, viva_ufs=False):
     ])
     arm_io = node('arm-io', [
         ph(),
-        ('device_type', cstr('sweet-io')),
-        ('compatible', cstr('sweet-io') + cstr('arm-io')),
+        ('device_type', cstr('mapple-io')),
+        ('compatible', cstr('mapple-io') + cstr('arm-io')),
         ('#address-cells', u32(2)),
         ('#size-cells', u32(2)),
         ('ranges', u64(0, SOC_BASE, 0x100000000 - SOC_BASE)),
@@ -376,17 +376,17 @@ def build(seed=None, qemu=False, highmem=False, viva=False, viva_ufs=False):
         node('wdt', [ph(), ('no-pmu', u32(1))]),
         # Main display: IOMobileFramebuffer.framework counts /arm-io children
         # with this device_type and reads the canvas size from the node
-        # (the presented iPhone X size, see SweetFramebuffer.cpp);
+        # (the presented iPhone X size, see MappleFramebuffer.cpp);
         # the kernel's AppleCLCD matches the compatible string.
         node('disp0', [
             ph(),
             ('device_type', cstr('display-subsystem')),
-            ('compatible', cstr('sweet,display')),
+            ('compatible', cstr('mapple,display')),
             ('canvas-width', u32(CANVAS[0])),
             ('canvas-height', u32(CANVAS[1])),
-        ])] + (viva_devices(ph, phandle, gic_ph, ecid) if viva else []))
+        ])] + (mapple_devices(ph, phandle, gic_ph, ecid) if viva else []))
 
-    fbcon = node('sweet-fbcon', [
+    fbcon = node('mapple-fbcon', [
         ph(),
         ('reg', u64(fb, fb_size)),
         ('width', u32(FB_W)),
@@ -394,11 +394,11 @@ def build(seed=None, qemu=False, highmem=False, viva=False, viva_ufs=False):
         ('stride', u32(fb_stride)),
     ])
 
-    # bsd/dev/sweet_ufs.c: the UFS host ABL leaves running (absolute physical reg).
-    ufs = node('sweet-ufs', [
+    # bsd/dev/mtk_ufs.c: the UFS host ABL leaves running (absolute physical reg).
+    ufs = node('mapple-ufs', [
         ph(),
         ('compatible', cstr('mediatek,mt8183-ufshci') if viva else cstr('qcom,ufshc')),
-        ('reg', u64(VIVA_UFS, VIVA_UFS_SIZE) if viva else u64(UFS, UFS_SIZE)),
+        ('reg', u64(MAPPLE_UFS, MAPPLE_UFS_SIZE) if viva else u64(UFS, UFS_SIZE)),
     ])
 
     # pmap_compute_max_asids requires the node even when no overrides are set.
@@ -429,26 +429,26 @@ def build(seed=None, qemu=False, highmem=False, viva=False, viva_ufs=False):
 
     # Identity of the iPhone X whose userland runs here: compatible[0] is
     # hw.model/hw.target (D22AP), model is hw.machine/hw.product
-    # (iPhone10,3). 'xiaomi,sweet' stays for SweetPlatformExpert matching.
+    # (iPhone10,3). 'mapple,platform' stays for MapplePlatformExpert matching.
     return node('device-tree', [
         ph(),
-        ('compatible', cstr('D22AP') + cstr('iPhone10,3') + cstr('xiaomi,sweet') + cstr('qcom,sm7150') + cstr('AppleARM')),
+        ('compatible', cstr('D22AP') + cstr('iPhone10,3') + cstr('mapple,platform') + cstr('qcom,sm7150') + cstr('AppleARM')),
         ('model', cstr('iPhone10,3')),
         ('target-type', cstr('D22')),
         ('target-sub-type', cstr('D22AP')),
         ('manufacturer', cstr('Apple Inc.')),
         ('#address-cells', u32(2)),
         ('#size-cells', u32(2)),
-    ], [chosen, defaults, cpus, arm_io, fbcon, buttons, pram] + product + ([ufs] if (viva_ufs if viva else not qemu) else []))
+    ], [chosen, defaults, cpus, arm_io, fbcon, buttons, pram] + product + ([ufs] if (mapple_ufs if viva else not qemu) else []))
 
 
 if __name__ == '__main__':
     for a in sys.argv:
-        if a.startswith('--canvas='):     # presented display size (P8: 1080x2400 with sweetfb_native=1)
+        if a.startswith('--canvas='):     # presented display size (P8: 1080x2400 with mp_fb_native=1)
             w, h = a.split('=', 1)[1].split('x')
             CANVAS[0], CANVAS[1] = int(w), int(h)
     root = build(qemu='--qemu' in sys.argv, highmem='--highmem' in sys.argv, viva='--viva' in sys.argv,
-                 viva_ufs='--ufs' in sys.argv)
+                 mapple_ufs='--ufs' in sys.argv)
     blob = adt.serialize(root)
     open(sys.argv[1], 'wb').write(blob)
     if '--dump' in sys.argv:

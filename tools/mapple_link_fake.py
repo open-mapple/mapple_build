@@ -1,9 +1,9 @@
-"""Simulated phone for viva-link.py (VIVA_LINK_FAKE=1): no USB involved.
+"""Simulated phone for mapple-link.py (USBLINK_FAKE=1): no USB involved.
 
 The phone enumerates as persona `link`, streams console lines ('L', ~20 lines/s with bursts of a few hundred),
-answers commands ('R'/'E'), runs programs for `run` ('O'), takes push/pull, and after VIVA_LINK_FAKE_SWITCH
-seconds (default 12, 0 = never) switches to persona `std` like vivausbd does: gone for ~300 ms, then back.
-`panic` and `reboot` drop it for a few seconds. VIVA_LINK_FAKE=stall makes the heartbeat request stall
+answers commands ('R'/'E'), runs programs for `run` ('O'), takes push/pull, and after USBLINK_FAKE_SWITCH
+seconds (default 12, 0 = never) switches to persona `std` like mapple-usbd does: gone for ~300 ms, then back.
+`panic` and `reboot` drop it for a few seconds. USBLINK_FAKE=stall makes the heartbeat request stall
 (old kernel). Tests call BUS.drop() to simulate a disconnect.
 """
 import errno, os, queue, random, threading, time
@@ -27,8 +27,8 @@ def fnv1a(data):
     return h
 
 
-SUBSYS = ('AppleSweetDisplay', 'VivaBattery', 'viva_usb', 'AGXViva', 'IOSurface', 'launchd', 'SpringBoard',
-          'backboardd', 'AppleQcomI2C', 'VivaWifi', 'AMFI', 'Sandbox', 'mDNSResponder', 'kernel')
+SUBSYS = ('MappleFramebuffer', 'BQ27Z561Battery', 'usb_link', 'MappleGPU', 'IOSurface', 'launchd', 'SpringBoard',
+          'backboardd', 'AppleQcomI2C', 'MT6631Wifi', 'AMFI', 'Sandbox', 'mDNSResponder', 'kernel')
 LINES = (
     '{s}: vsync {n} frames, {f:.1f} fps',
     '{s}: job 0x{h:x} done in {f:.2f} ms',
@@ -38,12 +38,12 @@ LINES = (
     '{s}: error: transfer timeout (status 0x{h:x})',
     'Sandbox: {s}({n}) deny(1) file-read-data /private/var/mobile/Library/Preferences/com.apple.{s}.plist',
     '{s}[{n}]: com.apple.{s}.agent: service exited with abnormal code: 1',
-    'VIVA LINK: heartbeat ok, host active',
+    'LINK: heartbeat ok, host active',
     '{s}: dart map iova 0x{h:x} len 0x4000 ' + 'flags 0x3 ' * 18,
     '{s}: mem free {n} pages, wired {m}{n} pages, compressor {f:.1f}%',
 )
 HELP = ('commands: ping, stat, help, peek PA [WORDS], poke PA VALUE, pmic, i2c, i2cw, i2c8, i2c8w, bat, wifi, '
-        'cpu, gpu, disp, push, pull, run, vivad, rewind [BYTES], console, panic [TEXT], reboot\n')
+        'cpu, gpu, disp, push, pull, run, mappled, rewind [BYTES], console, panic [TEXT], reboot\n')
 
 
 class Bus:
@@ -125,7 +125,7 @@ class Phone:
     def ctrl_transfer(self, bm, req, value, index, data=None, timeout=None):
         if self.gone:
             raise USBError('No such device (it may have been disconnected)', -4, errno.ENODEV)
-        if os.environ.get('VIVA_LINK_FAKE') == 'stall':
+        if os.environ.get('USBLINK_FAKE') == 'stall':
             raise USBError('Pipe error', -9, errno.EPIPE)
         self.active = value             # 1 heartbeat, 0 bye
         return 0
@@ -145,12 +145,12 @@ class Phone:
 
     def console(self):
         r = random.Random()
-        switch = float(os.environ.get('VIVA_LINK_FAKE_SWITCH', '12'))
-        self.log('viva_usb: configured (persona %s), Viva Link waiting for the host tool\n' % self.persona)
+        switch = float(os.environ.get('USBLINK_FAKE_SWITCH', '12'))
+        self.log('usb_link: configured (persona %s), Mapple link waiting for the host tool\n' % self.persona)
         burst_at = time.time() + 4
         while not self.gone:
             if self.persona == 'link' and switch and time.time() - self.born > switch:
-                self.log('vivausbd: VIVAUSB_ATTACH, switching to the std persona\n')
+                self.log('mapple-usbd: USBLINK_ATTACH, switching to the std persona\n')
                 time.sleep(0.05)
                 self.bus.drop(0.3, 'std')
                 return
@@ -178,7 +178,7 @@ class Phone:
         elif c == 'stat':
             self.reply('uptime %d s, persona %s, log ring 512 KiB (%d lines sent)\nusb: high speed, %s\n'
                        % (time.time() - self.born, self.persona, self.seq,
-                          'Viva Link active' if os.environ.get('VIVA_LINK_FAKE') != 'stall' else 'no heartbeat'))
+                          'Mapple link active' if os.environ.get('USBLINK_FAKE') != 'stall' else 'no heartbeat'))
         elif c == 'peek' and args:
             pa, words_ = int(args[0], 0) & ~3, int(args[1], 0) if len(args) > 1 else 1
             out = ''
@@ -198,12 +198,12 @@ class Phone:
             self.reply('pull %s: %d bytes, fnv1a 0x%08x\n' % (args[0], len(data), fnv1a(data)))
         elif c == 'run' and args:
             self.jobs += 1
-            self.reply('vivad: %d queued\n' % self.jobs)
+            self.reply('mappled: %d queued\n' % self.jobs)
             threading.Thread(target=self.job, args=(self.jobs, args), daemon=True).start()
         elif c == 'panic':
             self.reply('panicking\n')
             self.log('panic(cpu 0 caller 0xfffffe0007a1c2d4): "%s"\nDebugger message: panic\n'
-                     % (' '.join(args) or 'viva-link panic command'))
+                     % (' '.join(args) or 'mapple-link panic command'))
             time.sleep(0.2)
             self.bus.drop(3)
         elif c == 'reboot':

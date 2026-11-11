@@ -1,60 +1,60 @@
 #!/usr/bin/env python3
-"""Host side of the viva USB link (kernel boot-arg vivausb=3, patches 0093 and 0182).
+"""Host side of the Mapple USB link (kernel boot-arg mp_usblink=3, patches 0093 and 0182).
 
-  viva-link.py [-o LOGFILE]            full-screen interface: command prompt + command output + phone log
+  mapple-link.py [-o LOGFILE]            full-screen interface: command prompt + command output + phone log
                                        (needs textual; without it, the plain line mode of old)
-  viva-link.py [-o LOGFILE] log        live console only
-  viva-link.py cmd COMMAND...          send one command, print the reply, exit
-  viva-link.py dump PA SIZE FILE       save physical memory (via peek) to FILE
-  viva-link.py dumpdtb [FILE]          save LK's merged DTB (default viva-live.dtb)
-  viva-link.py push LOCAL PATH [MODE]  copy a file to the phone (MODE octal, default 644;
+  mapple-link.py [-o LOGFILE] log        live console only
+  mapple-link.py cmd COMMAND...          send one command, print the reply, exit
+  mapple-link.py dump PA SIZE FILE       save physical memory (via peek) to FILE
+  mapple-link.py dumpdtb [FILE]          save LK's merged DTB (default lk-live.dtb)
+  mapple-link.py push LOCAL PATH [MODE]  copy a file to the phone (MODE octal, default 644;
                                        written next to PATH, renamed when its checksum matches)
-  viva-link.py pull PATH [LOCAL]       copy a file from the phone
-  viva-link.py run PROGRAM [ARGS..]    run it through vivad, print its output, exit with its status
-                                       (PROGRAM without '/' is in /private/var/root/viva-tests)
-  viva-link.py bootrec [hex|show]      edit the VIVABOOT block (next boot's boot-args in userdata, patch 0180)
+  mapple-link.py pull PATH [LOCAL]       copy a file from the phone
+  mapple-link.py run PROGRAM [ARGS..]    run it through mappled, print its output, exit with its status
+                                       (PROGRAM without '/' is in /private/var/root/mapple-dev)
+  mapple-link.py bootrec [hex|show]      edit the MAPPLEBR block (next boot's boot-args in userdata, patch 0180)
                                        in $EDITOR (default vim; EDITOR=nano ...): fields and command line, or
                                        with `hex` the raw 4096 bytes; written when saved changed. Needs
-                                       /private/var/root/viva-tests/vbootrec (xnu-kernel artifact, tools/vivad) and kernel 0180
+                                       /private/var/root/mapple-dev/bootrec (xnu-kernel artifact, tools/mappled) and kernel 0180
 
-The phone is either 1209:0002 "viva iOS link" (persona `link`, the link is interface 0) or, once vivausbd
+The phone is either 1209:0002 "Mapple link" (persona `link`, the link is interface 0) or, once mapple-usbd
 switched it (patch 0182, docs/VIVA-USB-PERSONA.md), 05ac:12a8 (persona `std`: PTP, usbmux and the link as the
 interface of class ff/56/01). Only the link interface is claimed; its bulk endpoints come from the descriptors.
 The interactive and `log` modes wait for the phone and reattach by themselves when it re-enumerates (persona
 switch, reboot); the one-shot modes exit when the link goes away. While attached, every mode sends the
-"Viva Link active" heartbeat (vendor request 0x41/0x56 wValue 1, every second) and a bye (wValue 0) when the
+"Mapple link active" heartbeat (vendor request 0x41/0x56 wValue 1, every second) and a bye (wValue 0) when the
 interactive or log mode exits (one-shot commands just stop: the phone drops "active" 4 s later).
 
 Every IN packet is a frame: 'V', type, u16 length, payload with type 'L' (console log), 'R' (command
-reply), 'E' (end of reply), 'F' (file data of a pull) or 'O' (output of programs run by vivad).
+reply), 'E' (end of reply), 'F' (file data of a pull) or 'O' (output of programs run by mappled).
 Phone commands: see PHONE_COMMANDS (`help` on the phone has the arguments).
 
-Interactive keys: Enter sends, Up/Down history (~/.viva-link-history), Tab completes, PgUp/PgDn scroll the
+Interactive keys: Enter sends, Up/Down history (~/.mapple-link-history), Tab completes, PgUp/PgDn scroll the
 selected pane (Shift-Tab switches it), End resumes following, Ctrl-F filters the log, F2 layout, F3 maximise,
 Ctrl-C/Ctrl-D quit. Local commands start with ':' (or '/'): :help lists them.
 
-VIVA_LINK_FAKE=1 replaces the phone with a simulator (tools/viva_link_fake.py) for testing without USB.
+USBLINK_FAKE=1 replaces the phone with a simulator (tools/mapple_link_fake.py) for testing without USB.
 
 Needs pyusb and libusb (macOS: brew install libusb; python3 -m pip install pyusb), textual for the interface.
 """
 import argparse, collections, errno, os, re, sys, threading, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-FAKE = bool(os.environ.get('VIVA_LINK_FAKE'))
+FAKE = bool(os.environ.get('USBLINK_FAKE'))
 try:
     import usb.core, usb.util, usb.backend.libusb1
     USBError, USBTimeoutError = usb.core.USBError, usb.core.USBTimeoutError
 except ImportError:
     if not FAKE:
         sys.exit('pyusb missing: python3 -m pip install pyusb (and brew install libusb)')
-    from viva_link_fake import USBError, USBTimeoutError
+    from mapple_link_fake import USBError, USBTimeoutError
 
 VID, PID = 0x1209, 0x0002           # persona `link`: the link is interface 0
 STD_VID, STD_PID = 0x05ac, 0x12a8   # persona `std`: the link is the interface of class ff/56/01
 LINK_CLASS = (0xff, 0x56, 0x01)
 EP_IN, EP_OUT = 0x81, 0x01          # only if the descriptors say nothing
 PHONE_COMMANDS = ('ping', 'stat', 'help', 'peek', 'poke', 'pmic', 'i2c', 'i2cw', 'i2c8', 'i2c8w', 'bat', 'wifi',
-                  'cpu', 'gpu', 'disp', 'push', 'pull', 'run', 'vivad', 'rewind', 'console', 'panic', 'reboot')
+                  'cpu', 'gpu', 'disp', 'push', 'pull', 'run', 'mappled', 'rewind', 'console', 'panic', 'reboot')
 LINKS = []                          # every Link, for the bye at exit
 BYE = True                          # one-shot modes leave without a bye (see main)
 
@@ -78,8 +78,8 @@ def bulk_endpoints(intf):
 def find_link():
     """The phone's link interface in either persona (Port), or None. Descriptors only: nothing is opened."""
     if FAKE:
-        import viva_link_fake
-        return viva_link_fake.find_link(Port)
+        import mapple_link_fake
+        return mapple_link_fake.find_link(Port)
     be = backend()
     try:
         dev = usb.core.find(idVendor=VID, idProduct=PID, backend=be)
@@ -118,7 +118,7 @@ class Link:
         self.reply_done = threading.Event()
         self.reply = bytearray()
         self.file = bytearray()             # 'F' frames of a pull
-        self.output = bytearray()           # 'O' frames (vivad)
+        self.output = bytearray()           # 'O' frames (mappled)
         self.output_event = threading.Event()
         self.echo_output = True             # print 'O' frames (run_capture turns it off)
         self.lock = threading.Lock()
@@ -147,7 +147,7 @@ class Link:
                 shown = True
             time.sleep(0.25)
         dev = port.dev
-        product = 'viva iOS link'
+        product = 'Mapple link'
         if not FAKE:
             try:
                 product = usb.util.get_string(dev, dev.iProduct) or product
@@ -184,7 +184,7 @@ class Link:
         self.note('link lost: %s' % e)
 
     def beat(self):
-        """'Viva Link active' heartbeat, every second while attached."""
+        """'Mapple link active' heartbeat, every second while attached."""
         while True:
             self.hello(self.port)
             time.sleep(1)
@@ -339,7 +339,7 @@ def run(link, args):
     with link.lock:
         link.output = bytearray()
     reply = link.command('run ' + ' '.join('"%s"' % a if ' ' in a else a for a in args))
-    m = re.search(r'vivad: (\d+) queued', reply)
+    m = re.search(r'mappled: (\d+) queued', reply)
     if not m:
         sys.exit(reply.strip())
     end = re.compile(rb'\[%s\] (exit|signal) (-?\d+)' % m.group(1).encode())
@@ -355,12 +355,12 @@ def run(link, args):
 
 
 def run_capture(link, args):
-    """Run through vivad; return (output without the "[id] " prefixes, exit status)."""
+    """Run through mappled; return (output without the "[id] " prefixes, exit status)."""
     with link.lock:
         link.output = bytearray()
     link.echo_output = False
     reply = link.command('run ' + ' '.join('"%s"' % a if ' ' in a else a for a in args))
-    m = re.search(r'vivad: (\d+) queued', reply)
+    m = re.search(r'mappled: (\d+) queued', reply)
     if not m:
         sys.exit(reply.strip())
     tag = b'[%s] ' % m.group(1).encode()
@@ -380,7 +380,7 @@ def run_capture(link, args):
     return b'\n'.join(lines).decode(errors='replace') + '\n', status
 
 
-TESTS = '/private/var/root/viva-tests'
+TESTS = '/private/var/root/mapple-dev'
 
 
 def edit(text, suffix):
@@ -413,38 +413,38 @@ def unhexdump(text):
 
 
 def bootrec(link, args):
-    """The VIVABOOT record (shim/vivaboot.h) in an editor; written through vbootrec on the phone."""
+    """The MAPPLEBR record (shim/bootrec.h) in an editor; written through bootrec on the phone."""
     import tempfile
     mode = args[0] if args else 'edit'
     if mode in ('edit', 'show'):
-        text, st = run_capture(link, ['vbootrec', 'text'])
+        text, st = run_capture(link, ['bootrec', 'text'])
         if st:
-            sys.exit(text.strip() or 'vbootrec text: exit %d' % st)
+            sys.exit(text.strip() or 'bootrec text: exit %d' % st)
         if mode == 'show':
             sys.stdout.write(text)
             return
-        new = edit(text, '.vivaboot.txt')
+        new = edit(text, '.bootrec.txt')
         if new == text:
             print('no changes: nothing written')
             return
         local = tempfile.NamedTemporaryFile('w', suffix='.txt', delete=False)
         local.write(new)
         local.close()
-        push(link, local.name, TESTS + '/vbootrec-edit.txt', 0o600)
+        push(link, local.name, TESTS + '/bootrec-edit.txt', 0o600)
         os.unlink(local.name)
-        out, st = run_capture(link, ['vbootrec', 'put-text', TESTS + '/vbootrec-edit.txt'])
+        out, st = run_capture(link, ['bootrec', 'put-text', TESTS + '/bootrec-edit.txt'])
     elif mode == 'hex':
-        out, st = run_capture(link, ['vbootrec', 'raw', TESTS + '/vbootrec.bin'])
+        out, st = run_capture(link, ['bootrec', 'raw', TESTS + '/bootrec.bin'])
         if st:
             sys.exit(out.strip())
         local = tempfile.NamedTemporaryFile(suffix='.bin', delete=False)
         local.close()
-        pull(link, TESTS + '/vbootrec.bin', local.name)
+        pull(link, TESTS + '/bootrec.bin', local.name)
         data = open(local.name, 'rb').read()
-        text = ('# VIVABOOT block, 4096 bytes (layout: fork/shim/vivaboot.h). Edit the hex bytes; the |ascii| column\n'
+        text = ('# MAPPLEBR block, 4096 bytes (layout: fork/shim/bootrec.h). Edit the hex bytes; the |ascii| column\n'
                 '# is ignored. Written exactly as saved: line_hash (+0x20) is NOT recomputed here (use `bootrec`).\n'
                 + hexdump(data))
-        new = edit(text, '.vivaboot.hex')
+        new = edit(text, '.bootrec.hex')
         if new == text:
             os.unlink(local.name)
             print('no changes: nothing written')
@@ -454,15 +454,15 @@ def bootrec(link, args):
             os.unlink(local.name)
             sys.exit('%d bytes after editing, need 4096: nothing written' % len(raw))
         open(local.name, 'wb').write(raw)
-        push(link, local.name, TESTS + '/vbootrec.bin', 0o600)
+        push(link, local.name, TESTS + '/bootrec.bin', 0o600)
         os.unlink(local.name)
-        out, st = run_capture(link, ['vbootrec', 'put-raw', TESTS + '/vbootrec.bin'])
+        out, st = run_capture(link, ['bootrec', 'put-raw', TESTS + '/bootrec.bin'])
     else:
         sys.exit('bootrec [hex|show]')
     sys.stdout.write(out)
     if st:
         sys.exit(st)
-    text, _ = run_capture(link, ['vbootrec', 'text'])
+    text, _ = run_capture(link, ['bootrec', 'text'])
     print('\nnow:')
     sys.stdout.write(''.join(l + '\n' for l in text.splitlines() if not l.startswith('# Save') and not l.startswith('# flags')))
 
@@ -503,11 +503,11 @@ def main():
     link = Link(a.output, show_log=not oneshot, reconnect=not oneshot)
     if a.mode == 'interactive':
         try:
-            import viva_link_tui
+            import mapple_link_tui
         except ImportError as e:
             print('(plain mode, %s: python3 -m pip install textual for the full-screen interface)' % e, file=sys.stderr)
         else:
-            viva_link_tui.run(link, sys.modules[__name__])     # attaches by itself, shows the wait
+            mapple_link_tui.run(link, sys.modules[__name__])     # attaches by itself, shows the wait
             return
     link.connect()
     threading.Thread(target=link.pump, daemon=True).start()
@@ -531,7 +531,7 @@ def main():
         return
     if a.mode in ('dump', 'dumpdtb'):
         if a.mode == 'dumpdtb':     # LK's merged DTB (base + DTBO), still in RAM
-            pa, out = 0x4bc80000, (a.command or ['viva-live.dtb'])[0]
+            pa, out = 0x4bc80000, (a.command or ['lk-live.dtb'])[0]
             hdr = dump(link, pa, 8)
             if hdr[:4] != b'\xd0\x0d\xfe\xed':
                 sys.exit('no FDT at 0x%x (%s)' % (pa, hdr.hex()))

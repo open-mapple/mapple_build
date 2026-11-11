@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Raw image -> Android sparse image for `fastboot flash` (img2simg without AOSP).
 
-  viva-img2simg.py IN.img OUT.simg
+  img2simg.py IN.img OUT.simg
 
 Holes of a sparse input file (mkfile -n) become DONT_CARE chunks, so fastboot
 sends only the blocks the filesystem wrote; zero-filled data blocks become FILL.

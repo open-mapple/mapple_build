@@ -1,0 +1,9 @@
+Open Mapple: the build system. MIT (LICENSE).
+
+- tools/ and .github/workflows/xnu.yml come from ios-viva (github.com/Nik300/ios-viva): the ADT, boot image,
+  root image and USB link tools. MIT, Copyright (c) 2026 dipa-studio.
+- ios165/fetch-from-ipsw.py comes from HakiOS (github.com/oosexgang/hakios-xnu-kernel). MIT, Copyright (c)
+  2025-2026 the HakiOS authors.
+
+Fetched when the user builds, never kept here: iOS, from Apple's servers (Apple's licence); the iOS SDK
+(github.com/theos/sdks); darwin-xnu-build (github.com/blacktop/darwin-xnu-build, MIT).

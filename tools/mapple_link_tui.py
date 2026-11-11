@@ -1,7 +1,7 @@
-"""Full-screen interface of viva-link.py (Textual): command prompt, command output pane, phone log pane.
+"""Full-screen interface of mapple-link.py (Textual): command prompt, command output pane, phone log pane.
 
-viva-link.py imports it for the interactive mode and calls run(link, module); everything that touches USB
-stays in viva-link.py. The pump thread hands log/output bytes over through deques, a 20 Hz timer moves them
+mapple-link.py imports it for the interactive mode and calls run(link, module); everything that touches USB
+stays in mapple-link.py. The pump thread hands log/output bytes over through deques, a 20 Hz timer moves them
 into the panes, so bursts of log never block the prompt.
 """
 import bisect, glob, os, queue, re, shlex, subprocess, threading, time
@@ -18,7 +18,7 @@ from textual.strip import Strip
 from textual.suggester import Suggester
 from textual.widgets import Footer, Input, Label
 
-HISTORY = os.path.expanduser('~/.viva-link-history')
+HISTORY = os.path.expanduser('~/.mapple-link-history')
 LOG_LINES, OUT_LINES = 50_000, 20_000
 LOCAL = ('help', 'quit', 'clear', 'save', 'push', 'pull', 'run', 'filter', 'layout')
 SPIN = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
@@ -45,7 +45,7 @@ def style_log(text, tag):
     """A console line: whole-line colour by severity, subsystem prefix and hex numbers accented."""
     if tag == 'mark':
         return Text(text, style='bold %s' % (GREEN if '●' in text else RED if '✕' in text else YELLOW))
-    if 'VIVA LINK:' in text:
+    if 'LINK:' in text:
         return Text(text, style='bold ' + MAGENTA)
     if PANIC.search(text):
         return Text(text, style='bold %s on #3b1d2a' % RED)
@@ -69,7 +69,7 @@ def style_out(text, tag):
     if tag == 'mark':
         return style_log(text, tag)
     t = Text(text, style=OUT_STYLE.get(tag, FG))
-    if tag == 'out':                        # vivad's "[id] " prefix
+    if tag == 'out':                        # mappled's "[id] " prefix
         m = re.match(r'\[\d+\] ', text)
         if m:
             t.stylize(COMMENT, 0, m.end())
@@ -334,8 +334,8 @@ class CmdInput(Input):
         self.hpos = None
 
 
-class VivaLinkApp(App):
-    TITLE = 'viva-link'
+class MappleLinkApp(App):
+    TITLE = 'mapple-link'
     CSS = """
     Screen { background: %(BG)s; }
     #status { height: 1; background: %(BG_DARK)s; }
@@ -407,7 +407,7 @@ class VivaLinkApp(App):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id='status'):
-            yield Label(' ◆ VIVA LINK ', id='brand')
+            yield Label(' ◆ MAPPLE LINK ', id='brand')
             yield Label('', id='conn')
             yield Label('', id='persona')
             yield Label('', id='speed')
@@ -519,10 +519,10 @@ class VivaLinkApp(App):
             mark = '──── ● connesso · persona %s · %s ────' % (port.persona if port else '?', t)
             if link.attaches > 1:
                 self.notify('telefono di nuovo connesso (persona %s)' % (port.persona if port else '?'),
-                            title='Viva Link', timeout=3)
+                            title='Mapple link', timeout=3)
         elif link.state == 'lost':
             mark = '──── ✕ link perso · %s · in attesa che il telefono torni ────' % t
-            self.notify('link perso: riconnessione automatica', title='Viva Link', severity='warning', timeout=3)
+            self.notify('link perso: riconnessione automatica', title='Mapple link', severity='warning', timeout=3)
         else:
             mark = '──── ◌ in attesa del telefono · %s ────' % t
         self.logp.append([(mark, 'mark', '')])
@@ -544,14 +544,14 @@ class VivaLinkApp(App):
         hb = self.query_one('#hb', Label)
         if link.state != 'connected' or link.heartbeat is None:
             hb.set_classes('off')
-            hb.update('♡ Viva Link inattivo')
+            hb.update('♡ Mapple link inattivo')
         elif link.heartbeat == 'unsupported':
             hb.set_classes('unsupported')
             hb.update('⚠ heartbeat non supportato')
         else:
             hb.set_classes('ok')
             fresh = time.time() - link.last_beat
-            hb.update(('♥' if fresh < 0.35 else '♡') + ' Viva Link attivo' + ('' if fresh < 3 else ' (?)'))
+            hb.update(('♥' if fresh < 0.35 else '♡') + ' Mapple link attivo' + ('' if fresh < 3 else ' (?)'))
         self.query_one('#bytes', Label).update('log %s · %s righe' % (human(link.log_bytes),
                                                                      '{:,}'.format(self.logp.base + len(self.logp.lines))
                                                                      .replace(',', '.')))
@@ -625,7 +625,7 @@ class VivaLinkApp(App):
             self.say(':' + line, [(l, 'reply', '') for l in (
                 ':push LOCALE PERCORSO [MODO]   copia un file sul telefono (anche senza :)',
                 ':pull PERCORSO [LOCALE]        copia un file dal telefono (anche senza :)',
-                ':run PROGRAMMA [ARG..]         esegue con vivad e aspetta lo stato di uscita',
+                ':run PROGRAMMA [ARG..]         esegue con mappled e aspetta lo stato di uscita',
                 '                               (run senza : ritorna subito, l\'output arriva qui)',
                 ':clear [log|out|tutto]         svuota il pannello selezionato (o quello indicato)',
                 ':save [log|out] [FILE]         salva il pannello in un file',
@@ -643,7 +643,7 @@ class VivaLinkApp(App):
             pane = self.logp
             if args and args[0] in ('log', 'out'):
                 pane = self.logp if args.pop(0) == 'log' else self.outp
-            name = args[0] if args else time.strftime('viva-%s-%%Y%%m%%d-%%H%%M%%S.txt' %
+            name = args[0] if args else time.strftime('mapple-%s-%%Y%%m%%d-%%H%%M%%S.txt' %
                                                       ('log' if pane is self.logp else 'out'))
             try:
                 with open(os.path.expanduser(name), 'w') as f:
@@ -809,4 +809,4 @@ def ms(t0):
 
 
 def run(link, vl):
-    VivaLinkApp(link, vl).run()
+    MappleLinkApp(link, vl).run()

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Extract the iPhone X (D22AP) device tree from a local IPSW for mkadt.py's /product.
 
-  viva-extract-dt.py IPSW [OUT]     (OUT default research/ipsw-x/d22ap.adt)
+  extract-dt.py IPSW [OUT]     (OUT default research/ipsw-x/d22ap.adt)
 
 The IM4P payload is LZFSE-compressed ("bvx2"); macOS libcompression decodes it,
 so neither `ipsw` nor remotezip is needed.

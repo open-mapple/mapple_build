@@ -2,16 +2,16 @@
 # macOS port of tools/mkiosroot.sh: build the iOS root image for viva's
 # userdata partition straight from the IPSW, with macOS's own APFS and HFS+.
 #
-#   sudo tools/viva-mkiosroot-macos.sh IPSW OUT.img [SIZE]      (SIZE default 16g)
+#   sudo tools/mkiosroot-macos.sh IPSW OUT.img [SIZE]      (SIZE default 16g)
 #
 # Produces OUT.img (raw, sparse file: one case-sensitive journaled HFS+ volume,
 # no partition map) with the OS root, both cryptexes, the same links and
-# keybag as mkiosroot.sh, and tools/sweet-root-tweaks.py applied. Then
-# tools/viva-img2simg.py turns it into an Android sparse image for fastboot.
+# keybag as mkiosroot.sh, and tools/root-tweaks.py applied. Then
+# tools/img2simg.py turns it into an Android sparse image for fastboot.
 #
 # Files are copied with GNU rsync (Homebrew): it reads through macOS's APFS
 # driver, which decompresses LZBITMAP/LZFSE files, and copies no BSD flags or
-# xattrs, so nothing on the HFS+ volume needs AppleFSCompression (the viva
+# xattrs, so nothing on the HFS+ volume needs AppleFSCompression (the Mapple
 # kernel has no kexts). Owners and modes are kept (ownership enabled, root).
 set -euo pipefail
 
@@ -23,7 +23,7 @@ RSYNC=/opt/homebrew/bin/rsync
 [[ -x $RSYNC ]] || { echo "need GNU rsync: brew install rsync" >&2; exit 1; }
 [[ ! -e $out ]] || { echo "refusing to overwrite $out" >&2; exit 1; }
 
-work=$(mktemp -d /tmp/viva-iosroot.XXXXXX)
+work=$(mktemp -d /tmp/mapple-iosroot.XXXXXX)
 # macOS /bin/bash is 3.2: with set -u an empty array counts as unset, so
 # arrays are only expanded through their length.
 attached=()
@@ -130,7 +130,7 @@ printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
 chown 0:0 "$kb"
 chmod 0600 "$kb"
 
-python3 "$here/sweet-root-tweaks.py" "$work/root"
+python3 "$here/root-tweaks.py" "$work/root"
 
 # Nothing on the volume may still be HFS-compressed.
 left=$(find "$work/root" -flags +compressed -print -quit 2>/dev/null || true)
@@ -141,4 +141,4 @@ df -h "$work/root"
 umount "$work/root"
 fsck_hfs -f -n "/dev/r${dev#/dev/}"
 chown "${SUDO_UID:-0}:${SUDO_GID:-0}" "$out"
-echo "done: $out (convert with tools/viva-img2simg.py)"
+echo "done: $out (convert with tools/img2simg.py)"
