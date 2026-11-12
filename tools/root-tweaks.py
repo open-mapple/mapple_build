@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Apply the MT6781 bring-up changes to an iOS root made by tools/mkiosroot.sh.
 
-  sudo root-tweaks.py MOUNTED_ROOT
+  sudo root-tweaks.py MOUNTED_ROOT [DEVICE]
 
 MOUNTED_ROOT is the HFS+ image mounted read-write (Linux: run
 `fsck.hfsplus -fy` on the image, then `mount -t hfsplus -o loop,force`).
@@ -26,6 +26,9 @@ screen (image versions v8-v14 in NOTES.md):
   activation      mobileactivationd data ark seeded; the actual Activated state
                   comes from its Hactivation branch, selected by the /chosen
                   security-status properties in tools/mkadt.py
+  light UI        with DEVICE and `light_ui 1` in its device.conf: Reduce Motion,
+                  Reduce Transparency and Prefer Cross-Fade Transitions on for
+                  the mobile user
 """
 import glob, os, plistlib, shutil, sys
 
@@ -124,8 +127,33 @@ def audio(root):
         print('StartRecorderServer off', os.path.relpath(conf, root))
 
 
+def device_conf(name):
+    """The settings of `device NAME` in device/*/NAME/device.conf of this checkout."""
+    top = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../..')
+    paths = glob.glob(os.path.join(top, 'device/*', name, 'device.conf'))
+    if len(paths) != 1:
+        sys.exit('no device.conf for ' + name)
+    conf, inside = {}, False
+    for line in open(paths[0]):
+        if line.startswith('device '):
+            inside = line.split()[1] == name
+        elif inside and line.startswith('\t'):
+            key, _, value = line.strip().partition('\t')
+            conf[key] = value
+    return conf
+
+
+def light_ui(root):
+    # the keys libAccessibility's setters write (_AXSSetReduceMotionEnabled,
+    # _AXSSetEnhanceBackgroundContrastEnabled, _AXSSetReduceMotionReduceSlideTransitionsEnabled)
+    merge_pref(root, 'com.apple.Accessibility', {
+        'ReduceMotionEnabled': True,
+        'EnhancedBackgroundContrastEnabled': True,
+        'ReduceMotionReduceSlideTransitionsPreference': True})
+
+
 def main():
-    if len(sys.argv) != 2 or not os.path.isdir(os.path.join(sys.argv[1], 'System/Library/xpc')):
+    if len(sys.argv) not in (2, 3) or not os.path.isdir(os.path.join(sys.argv[1], 'System/Library/xpc')):
         sys.exit(__doc__)
     root = sys.argv[1]
     launchd(root)
@@ -149,6 +177,8 @@ def main():
                            'SilentICDPUpgrade')})
     merge_pref(root, 'com.apple.managedconfiguration.notbackedup', {
         'LockdownActivationIndicatesCloudConfigurationAvailable': False})
+    if len(sys.argv) == 3 and device_conf(sys.argv[2]).get('light_ui') == '1':
+        light_ui(root)
 
 
 if __name__ == '__main__':

@@ -2,7 +2,7 @@
 # macOS port of tools/mkiosroot.sh: build the iOS root image for viva's
 # userdata partition straight from the IPSW, with macOS's own APFS and HFS+.
 #
-#   sudo tools/mkiosroot-macos.sh IPSW OUT.img [SIZE]      (SIZE default 16g)
+#   sudo tools/mkiosroot-macos.sh IPSW OUT.img [SIZE] [DEVICE]   (SIZE default 16g)
 #
 # Produces OUT.img (raw, sparse file: one case-sensitive journaled HFS+ volume,
 # no partition map) with the OS root, both cryptexes, the same links and
@@ -17,7 +17,7 @@ set -euo pipefail
 
 [[ $# -ge 2 ]] || { sed -n '2,13p' "$0"; exit 2; }
 [[ $EUID == 0 ]] || { echo "run with sudo (owners must be preserved)" >&2; exit 1; }
-ipsw=$(cd "$(dirname "$1")" && pwd)/$(basename "$1") out=$2 size=${3:-16g}
+ipsw=$(cd "$(dirname "$1")" && pwd)/$(basename "$1") out=$2 size=${3:-16g} device=${4:-}
 here=$(cd "$(dirname "$0")" && pwd)
 RSYNC=/opt/homebrew/bin/rsync
 [[ -x $RSYNC ]] || { echo "need GNU rsync: brew install rsync" >&2; exit 1; }
@@ -130,7 +130,7 @@ printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
 chown 0:0 "$kb"
 chmod 0600 "$kb"
 
-python3 "$here/root-tweaks.py" "$work/root"
+python3 "$here/root-tweaks.py" "$work/root" $device
 
 # Nothing on the volume may still be HFS-compressed.
 left=$(find "$work/root" -flags +compressed -print -quit 2>/dev/null || true)
