@@ -505,7 +505,15 @@ def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False, sp
         # The iPhone X is a P3 display: CoreAnimation would then compose in extended-range 10-bit formats
         # (w30r/w40a). viva's panel is shown as 8-bit BGRA, so say sRGB (AppleCLCD also converts XR10).
         product_props = [(k, cstr('sRGB') if k == 'artwork-display-gamut' else v) for k, v in product_props]
+    if product_props and spaced:
+        product_props = [(k, cstr('realme 8i') if k == 'product-name' else v) for k, v in product_props]
     product = [node('product', [ph()] + product_props)] if product_props else []
+
+    # What About shows (MobileGestalt): model-number + region-info, regulatory-model-number, /product product-name.
+    # serial-number is a placeholder the shim overwrites at each boot with LK's androidboot.serialno.
+    pad32 = lambda t: t.encode().ljust(32, b'\0')
+    identity = [('serial-number', pad32('MAPPLE0000000000')), ('model-number', pad32('RMX3151')),
+                ('region-info', pad32('')), ('regulatory-model-number', pad32('RMX3151'))] if spaced else []
 
     # Panic log region. /pram reg = <phys size>; it sits just above the
     # dram-size we expose, so XNU maps it but never allocates into it.
@@ -523,7 +531,7 @@ def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False, sp
         ('manufacturer', cstr('Apple Inc.')),
         ('#address-cells', u32(2)),
         ('#size-cells', u32(2)),
-    ], [chosen, defaults, cpus, arm_io, fbcon, buttons, pram] + product + ([ufs] if (mapple_ufs if viva else not qemu) else []))
+    ] + identity, [chosen, defaults, cpus, arm_io, fbcon, buttons, pram] + product + ([ufs] if (mapple_ufs if viva else not qemu) else []))
 
 
 if __name__ == '__main__':
