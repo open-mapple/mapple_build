@@ -4,6 +4,7 @@
   mapple-link.py [-o LOGFILE]            full-screen interface: command prompt + command output + phone log
                                        (needs textual; without it, the plain line mode of old)
   mapple-link.py [-o LOGFILE] log        live console only
+                                       (-t: each line of LOGFILE starts with the Mac's time, for boot timings)
   mapple-link.py cmd COMMAND...          send one command, print the reply, exit
   mapple-link.py dump PA SIZE FILE       save physical memory (via peek) to FILE
   mapple-link.py dumpdtb [FILE]          save LK's merged DTB (default lk-live.dtb)
@@ -100,8 +101,27 @@ def stalled(e):
     return getattr(e, 'errno', None) == errno.EPIPE or getattr(e, 'backend_error_code', None) == -9
 
 
+class StampedLog:
+    """The log file with the Mac's time (HH:MM:SS.mmm) at the start of each line."""
+    def __init__(self, f):
+        self.f, self.start = f, True
+
+    def write(self, data):
+        out = bytearray()
+        for line in data.splitlines(keepends=True):
+            if self.start:
+                t = time.time()
+                out += time.strftime('[%H:%M:%S', time.localtime(t)).encode() + b'.%03d] ' % (int(t * 1000) % 1000)
+            out += line
+            self.start = line.endswith(b'\n')
+        self.f.write(out)
+
+    def flush(self):
+        self.f.flush()
+
+
 class Link:
-    def __init__(self, logfile=None, show_log=True, reconnect=False):
+    def __init__(self, logfile=None, show_log=True, reconnect=False, stamps=False):
         self.port = None                    # Port while attached
         self.state = 'waiting'              # waiting (never attached) / connected / lost (waiting again)
         self.reconnect = reconnect          # reattach when the phone goes away (else exit)
@@ -113,6 +133,8 @@ class Link:
         self.log_bytes = 0
         self.on_log = self.on_output = None # set by the interface: called by the pump thread with the bytes
         self.log = open(logfile, 'ab') if logfile else None
+        if self.log and stamps:
+            self.log = StampedLog(self.log)
         self.logfile = logfile
         self.show_log = show_log
         self.reply_done = threading.Event()
@@ -489,6 +511,7 @@ def dump(link, pa, size):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('-o', '--output', help='append the console log to this file')
+    ap.add_argument('-t', '--timestamps', action='store_true', help="the Mac's time at the start of each line of the file")
     ap.add_argument('mode', nargs='?', default='interactive',
                     choices=('interactive', 'log', 'cmd', 'dump', 'dumpdtb', 'push', 'pull', 'run', 'bootrec'))
     ap.add_argument('command', nargs='*')
@@ -500,7 +523,7 @@ def main():
     # heartbeat, so a run of commands is one link session.
     global BYE
     BYE = not oneshot
-    link = Link(a.output, show_log=not oneshot, reconnect=not oneshot)
+    link = Link(a.output, show_log=not oneshot, reconnect=not oneshot, stamps=a.timestamps)
     if a.mode == 'interactive':
         try:
             import mapple_link_tui
