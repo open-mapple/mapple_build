@@ -13,6 +13,8 @@
   mapple-link.py pull PATH [LOCAL]       copy a file from the phone
   mapple-link.py run PROGRAM [ARGS..]    run it through mappled, print its output, exit with its status
                                        (PROGRAM without '/' is in /private/var/root/mapple-dev)
+  mapple-link.py surftest [N]            the GPU draws into an IOSurface under every combination of the kernel's
+                                       kern.mapple_gpu_* switches (or combination N), each read back (black frames)
   mapple-link.py bootrec [hex|show]      edit the MAPPLEBR block (next boot's boot-args in userdata, patch 0180)
                                        in $EDITOR (default vim; EDITOR=nano ...): fields and command line, or
                                        with `hex` the raw 4096 bytes; written when saved changed. Needs
@@ -514,7 +516,8 @@ def main():
     ap.add_argument('-o', '--output', help='append the console log to this file')
     ap.add_argument('-t', '--timestamps', action='store_true', help="the Mac's time at the start of each line of the file")
     ap.add_argument('mode', nargs='?', default='interactive',
-                    choices=('interactive', 'log', 'cmd', 'dump', 'dumpdtb', 'push', 'pull', 'run', 'bootrec'))
+                    choices=('interactive', 'log', 'cmd', 'dump', 'dumpdtb', 'push', 'pull', 'run', 'bootrec',
+                             'surftest'))
     ap.add_argument('command', nargs='*')
     a = ap.parse_args()
 
@@ -548,6 +551,12 @@ def main():
     if a.mode == 'bootrec':
         bootrec(link, a.command)
         return
+    if a.mode == 'surftest':
+        for c in ('gpu on', 'gpu publish'):          # harmless when already done
+            print(link.command(c).strip())
+        out, st = run_capture(link, [TESTS + '/surftest'] + a.command)
+        sys.stdout.write(out)
+        sys.exit(st)
     if a.mode == 'run':
         if not a.command:
             sys.exit('run PROGRAM [ARGS..]')
