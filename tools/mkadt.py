@@ -315,6 +315,16 @@ def spaced_devices(ph, phandle, gic_ph):
             ('max-y', u32(2047)),
             ('panel-size', u32(1080, SPACED_FB_H)),
         ]),
+        # Mali-G57 MC2, the same SoC block as viva's (realme dts: mali@13000000, SPI 274-276): MappleGPU.cpp, which does
+        # nothing without the boot-arg mp_gpu=1|2.
+        node('gpu', [
+            ph(),
+            ('compatible', cstr('mediatek,mt6781-mali')),
+            ('reg', io(0x13000000, 0x4000) + io(0x13fbf000, 0x1000) + io(0x10006000, 0x1000) +
+                    io(0x10000000, 0x1000) + io(0x1000c000, 0x1000) + io(0x10001000, 0x1000)),
+            ('interrupt-parent', u32(gic_ph)),
+            ('interrupts', spi(0x112, IRQ_LEVEL_HIGH) + spi(0x113, IRQ_LEVEL_HIGH) + spi(0x114, IRQ_LEVEL_HIGH)),
+        ]),
     ]
 
 
