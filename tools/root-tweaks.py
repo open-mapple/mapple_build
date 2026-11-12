@@ -145,11 +145,13 @@ def device_conf(name):
 
 def light_ui(root):
     # the keys libAccessibility's setters write (_AXSSetReduceMotionEnabled,
-    # _AXSSetEnhanceBackgroundContrastEnabled, _AXSSetReduceMotionReduceSlideTransitionsEnabled)
+    # _AXSSetEnhanceBackgroundContrastEnabled, _AXSSetReduceMotionReduceSlideTransitionsEnabled);
+    # AXSDidResetD22Preferences: AccessibilitySettingsLoader's one-time _resetD22ReduceMotion is done already
     merge_pref(root, 'com.apple.Accessibility', {
         'ReduceMotionEnabled': True,
         'EnhancedBackgroundContrastEnabled': True,
-        'ReduceMotionReduceSlideTransitionsPreference': True})
+        'ReduceMotionReduceSlideTransitionsPreference': True,
+        'AXSDidResetD22Preferences': True})
 
 
 def main():
