@@ -64,11 +64,13 @@ def launchd(root):
         if '_PanicOnCrash' in job:
             job['_PanicOnCrasX'] = job.pop('_PanicOnCrash')
             renamed += 1
-    removed = [k for k, j in jobs.items() if j.get('Label') == 'com.apple.CommCenter']
+    # no baseband; bluetoothd and fairplayd.H2 restart in a loop without Bluetooth and media support
+    labels = ('com.apple.CommCenter', 'com.apple.bluetoothd', 'com.apple.fairplayd.H2')
+    removed = [k for k, j in jobs.items() if j.get('Label') in labels]
     for k in removed:
         del jobs[k]
     save(path, plist, st.st_uid, st.st_gid, st.st_mode & 0o7777)
-    print(f'launchd.plist: {renamed} _PanicOnCrash renamed, {len(removed)} CommCenter jobs removed')
+    print(f'launchd.plist: {renamed} _PanicOnCrash renamed, {len(removed)} jobs removed')
 
 
 def containers(root):
