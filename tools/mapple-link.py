@@ -403,6 +403,7 @@ def run_capture(link, args):
 
 
 TESTS = '/private/var/root/mapple-dev'
+BOOTREC = TESTS + '/bootrec'          # by its path: a daemon may look relative names up elsewhere
 
 
 def edit(text, suffix):
@@ -439,7 +440,7 @@ def bootrec(link, args):
     import tempfile
     mode = args[0] if args else 'edit'
     if mode in ('edit', 'show'):
-        text, st = run_capture(link, ['bootrec', 'text'])
+        text, st = run_capture(link, [BOOTREC, 'text'])
         if st:
             sys.exit(text.strip() or 'bootrec text: exit %d' % st)
         if mode == 'show':
@@ -454,9 +455,9 @@ def bootrec(link, args):
         local.close()
         push(link, local.name, TESTS + '/bootrec-edit.txt', 0o600)
         os.unlink(local.name)
-        out, st = run_capture(link, ['bootrec', 'put-text', TESTS + '/bootrec-edit.txt'])
+        out, st = run_capture(link, [BOOTREC, 'put-text', TESTS + '/bootrec-edit.txt'])
     elif mode == 'hex':
-        out, st = run_capture(link, ['bootrec', 'raw', TESTS + '/bootrec.bin'])
+        out, st = run_capture(link, [BOOTREC, 'raw', TESTS + '/bootrec.bin'])
         if st:
             sys.exit(out.strip())
         local = tempfile.NamedTemporaryFile(suffix='.bin', delete=False)
@@ -478,13 +479,13 @@ def bootrec(link, args):
         open(local.name, 'wb').write(raw)
         push(link, local.name, TESTS + '/bootrec.bin', 0o600)
         os.unlink(local.name)
-        out, st = run_capture(link, ['bootrec', 'put-raw', TESTS + '/bootrec.bin'])
+        out, st = run_capture(link, [BOOTREC, 'put-raw', TESTS + '/bootrec.bin'])
     else:
         sys.exit('bootrec [hex|show]')
     sys.stdout.write(out)
     if st:
         sys.exit(st)
-    text, _ = run_capture(link, ['bootrec', 'text'])
+    text, _ = run_capture(link, [BOOTREC, 'text'])
     print('\nnow:')
     sys.stdout.write(''.join(l + '\n' for l in text.splitlines() if not l.startswith('# Save') and not l.startswith('# flags')))
 
