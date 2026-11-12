@@ -2,7 +2,7 @@
 """Build the minimal Apple Device Tree that the MT6781 xnu needs to boot.
 
 Only what the early boot path actually reads (see NOTES.md); every MMIO
-address comes from the sweet live FDT. Usage:  mkadt.py OUT.adt [--dump] [--qemu] [--highmem] [--viva [--ufs]] [--canvas=WxH]
+address comes from the sweet live FDT. Usage:  mkadt.py OUT.adt [--dump] [--qemu] [--highmem] [--viva|--spaced [--ufs]] [--canvas=WxH]
 """
 import hashlib, os, struct, sys
 
@@ -55,6 +55,13 @@ MAPPLE_FB_SIZE = (MAPPLE_FB_STRIDE * 2400 + 0x3fff) & ~0x3fff
 MAPPLE_TIMEBASE = 13000000
 MAPPLE_VTIMER_INTID = 27  # DT timer <GIC_PPI 11>, the standard virtual timer
 MAPPLE_ECID = 0x5649564100000001  # 'VIVA' + 1, synthetic
+# --spaced: realme 8i (MT6781, the same SoC as viva). 4 GB of RAM, 0x40000000-0x13fffffff; LK's reservations are
+# all below 0xc0000000 but for dramc-rk at 0x13ffff000, so XNU gets 0xc0000000 up to the 32 MB boundary below it.
+# LK's framebuffer: atag,videolfb 0x771b0000, the first of three 1080x2412 buffers, pitch 4320.
+SPACED_PHYS_BASE, SPACED_MEM_SIZE = 0xc0000000, 0x13e000000 - 0xc0000000
+SPACED_FB, SPACED_FB_STRIDE, SPACED_FB_H = 0x771b0000, 1080 * 4, 2412
+SPACED_FB_SIZE = (SPACED_FB_STRIDE * SPACED_FB_H + 0x3fff) & ~0x3fff
+SPACED_ECID = 0x5350414300000001  # 'SPAC' + 1, synthetic
 # MediaTek ufshci@11270000 (DT size 0x2300, one 16K page)
 MAPPLE_UFS, MAPPLE_UFS_SIZE = 0x11270000, 0x4000
 
@@ -66,7 +73,7 @@ BOOT_MANIFEST_HASH = hashlib.sha384(b'sweet boot manifest').digest()
 # an Apple artifact (kept out of git): extract it from the IPSW with
 #   tools/remotezip.py URL DeviceTree.d22ap.im4p DIR
 #   ipsw img4 im4p extract DIR/Firmware/all_flash/DeviceTree.d22ap.im4p -o d22ap.adt
-D22AP_ADT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../research/ipsw-x/d22ap.adt')
+D22AP_ADT = os.environ.get('D22AP_ADT') or os.path.join(os.path.dirname(os.path.abspath(__file__)), '../research/ipsw-x/d22ap.adt')
 
 
 def d22ap_product(path=D22AP_ADT):
@@ -250,13 +257,77 @@ def mapple_devices(ph, phandle, gic_ph, ecid):
     ]
 
 
-def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False):
+def spaced_devices(ph, phandle, gic_ph):
+    """realme 8i /arm-io devices: viva's MT6781 blocks, its own keys and touch screen; nothing for chips it lacks."""
+    io = lambda pa, size: u64(pa - SOC_BASE, size)
+    eint_ph = next(phandle)
+    return [
+        # Volume down is bit 1 of KP_MEM1 here (kpd-hw-init-map 0x72); power and volume up are the PMIC's keys.
+        node('keypad', [
+            ph(),
+            ('compatible', cstr('mediatek,mt6781-keypad')),
+            ('reg', io(0x10010000, 0x1000)),
+            ('interrupt-parent', u32(gic_ph)),
+            ('interrupts', spi(0x49, IRQ_EDGE_RISING)),
+            ('keymap', u32(1, HID_CSMR_VOLUME_DOWN)),
+        ]),
+        node('eint', [
+            ('AAPL,phandle', u32(eint_ph)),
+            ('compatible', cstr('mediatek,mt6781-eint')),
+            ('reg', io(0x1000b000, 0x1000)),
+            ('interrupt-controller', b''),
+            ('#interrupt-cells', u32(2)),
+            ('interrupt-parent', u32(gic_ph)),
+            ('interrupts', spi(0xba, IRQ_LEVEL_HIGH)),
+        ]),
+        # The PMIC (MT6358 family, the live DT's mt6358-pmic, interrupt EINT 144): key 0 PWRKEY = power,
+        # 1 HOMEKEY = volume up (TOPSTATUS bits 1 and 3).
+        node('pwrap', [
+            ph(),
+            ('compatible', cstr('mediatek,mt6781-pwrap')),
+            ('reg', io(0x1000d000, 0x1000)),
+        ], [node('pmic', [
+            ph(),
+            ('compatible', cstr('mediatek,mt6366-pmic')),
+            ('interrupt-parent', u32(eint_ph)),
+            ('interrupts', u32(144, IRQ_LEVEL_HIGH)),
+        ], [node('keys', [
+            ph(),
+            ('compatible', cstr('mediatek,mt6366-keys')),
+            ('keymap', u32(0, HID_CSMR_POWER, 1, HID_CSMR_VOLUME_UP)),
+        ])])]),
+        # GPIO: only the touch screen's SPI4 pins driven by hand (MOSI 13, CLK 144, CS 145; MISO 14 is an input).
+        node('gpio', [
+            ph(),
+            ('compatible', cstr('mediatek,mt6781-gpio')),
+            ('reg', io(0x10005000, 0x1000)),
+            ('output-pins', u32(13, 144, 145)),
+        ]),
+        # ILI7807S touch (iokit/Kernel/arm/hid/ILI7807S.cpp): SPI4's pins by hand, a report per low pulse on
+        # EINT 12; firmware sent by mtkloader before the shim (mp_ili_fw= for sending it again).
+        node('touch', [
+            ph(),
+            ('compatible', cstr('ilitek,ili7807s')),
+            ('spi-gpios', u32(13, 14, 144, 145)),
+            ('interrupt-parent', u32(eint_ph)),
+            ('interrupts', u32(12, IRQ_EDGE_FALLING)),
+            ('max-x', u32(2047)),
+            ('max-y', u32(2047)),
+            ('panel-size', u32(1080, SPACED_FB_H)),
+        ]),
+    ]
+
+
+def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False, spaced=False):
     """qemu=True: same tree, but with QEMU virt's GIC addresses and CNTFRQ (tools/qemu-sweet.py).
     viva=True: Redmi Note 11 Pro 4G addresses. Without mapple_ufs there is no UFS node, so the
     kernel never touches storage; with it the kernel drives the MediaTek host LK left running."""
+    viva = viva or spaced           # the same SoC: viva's addresses but for RAM, framebuffer and devices
     phys_base, mem_size = (HIGH_PHYS_BASE, HIGH_MEM_SIZE) if highmem else (PHYS_BASE, MEM_SIZE)
     if viva:
         phys_base, mem_size = MAPPLE_PHYS_BASE, MAPPLE_MEM_SIZE
+    if spaced:
+        phys_base, mem_size = SPACED_PHYS_BASE, SPACED_MEM_SIZE
     # Carve the panic log off the top so the kernel never allocates over it.
     panic_base = phys_base + mem_size - PANIC_LOG_SIZE
     mem_size -= PANIC_LOG_SIZE
@@ -267,6 +338,9 @@ def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False):
         gicd, gicr, timebase = MAPPLE_GICD, MAPPLE_GICR, MAPPLE_TIMEBASE
         gicd_size, gicr_size, vtimer = MAPPLE_GICD_SIZE, MAPPLE_GICR_SIZE, MAPPLE_VTIMER_INTID
         fb, fb_size, fb_stride, ecid = MAPPLE_FB, MAPPLE_FB_SIZE, MAPPLE_FB_STRIDE, MAPPLE_ECID
+    fb_h = FB_H
+    if spaced:
+        fb, fb_size, fb_stride, ecid, fb_h = SPACED_FB, SPACED_FB_SIZE, SPACED_FB_STRIDE, SPACED_ECID, SPACED_FB_H
     seed = seed if seed is not None else os.urandom(64)
     phandle = iter(range(1, 1000))
     ph = lambda: ('AAPL,phandle', u32(next(phandle)))
@@ -384,13 +458,13 @@ def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False):
             ('compatible', cstr('mapple,display')),
             ('canvas-width', u32(CANVAS[0])),
             ('canvas-height', u32(CANVAS[1])),
-        ])] + (mapple_devices(ph, phandle, gic_ph, ecid) if viva else []))
+        ])] + (spaced_devices(ph, phandle, gic_ph) if spaced else mapple_devices(ph, phandle, gic_ph, ecid) if viva else []))
 
     fbcon = node('mapple-fbcon', [
         ph(),
         ('reg', u64(fb, fb_size)),
         ('width', u32(FB_W)),
-        ('height', u32(FB_H)),
+        ('height', u32(fb_h)),
         ('stride', u32(fb_stride)),
     ])
 
@@ -448,7 +522,7 @@ if __name__ == '__main__':
             w, h = a.split('=', 1)[1].split('x')
             CANVAS[0], CANVAS[1] = int(w), int(h)
     root = build(qemu='--qemu' in sys.argv, highmem='--highmem' in sys.argv, viva='--viva' in sys.argv,
-                 mapple_ufs='--ufs' in sys.argv)
+                 mapple_ufs='--ufs' in sys.argv, spaced='--spaced' in sys.argv)
     blob = adt.serialize(root)
     open(sys.argv[1], 'wb').write(blob)
     if '--dump' in sys.argv:
