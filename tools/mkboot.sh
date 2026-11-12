@@ -21,7 +21,7 @@ KERNEL=${1:?usage: mkboot.sh KERNEL STOCK_BOOT_IMG [nostorage|ufs-ro|ufs-rw]}
 STOCK=${2:?usage: mkboot.sh KERNEL STOCK_BOOT_IMG [nostorage|ufs-ro|ufs-rw]}
 STAGE=${3:-ufs-ro}
 
-BASE='debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam -noprogress rd=ufsroot0 wdt=-1 wdt_test=no_user_checkin mp_keys=0 mp_touch=0 mp_usb=0 mp_usb_log=0 mp_conlog=0 mp_ufslun=2 mp_fb_noconsole=1'
+BASE='debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam -noprogress rd=ufsroot0 wdt=-1 wdt_test=no_user_checkin mp_touch=0 mp_conlog=0 mp_ufslun=2 mp_fb_noconsole=1'
 case $STAGE in
 nostorage) ADT_FLAGS=(--viva); CMDLINE=$BASE ;;
 ufs-ro) ADT_FLAGS=(--viva --ufs); CMDLINE=$BASE ;;
