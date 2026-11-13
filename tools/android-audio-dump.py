@@ -4,7 +4,7 @@
   android-audio-dump.py OUT_DIR pa                which speaker amplifier is fitted (I2C3 0x58 / 0x28; dmesg's probe
                                                   lines, so right after Android boots)
   android-audio-dump.py OUT_DIR vibr              the motor rail's voltage (the vibr regulator, the vibrator's vmax, VIBR)
-  android-audio-dump.py OUT_DIR playing LABEL     while Android plays on the speaker (LABEL: max, half, ...):
+  android-audio-dump.py OUT_DIR playing LABEL     while Android plays on the speaker or records (LABEL: max, rec, ...):
                                                   the AW87319's enable, codec 0x2200-0x2492, AFE, clocks, pins, mixer
   android-audio-dump.py selftest                  the command check, without a phone
 
@@ -111,12 +111,13 @@ def vibr(out, pmic):
 
 def playing(out, label, pmic):
     save(out, 'pa-%s.txt' % label, 'aw87319 hwen: ' + adb('cat /sys/bus/i2c/devices/3-0058/hwen', pmic))
-    save(out, 'codec-%s.txt' % label, pmic_reads([0x0008, 0x000a, 0x07ac, 0x1ad2, 0x1aaa] + list(range(0x2200, 0x2494, 2)), pmic))
+    save(out, 'codec-%s.txt' % label, pmic_reads([0x0008, 0x000a, 0x003c, 0x0088, 0x00de, 0x07ac, 0x1ad2, 0x1aaa] +
+                                                  list(range(0x2200, 0x2494, 2)), pmic))
     if debugfs_mounted(pmic):
         save(out, 'afe-%s.txt' % label, adb('cat /sys/kernel/debug/mtksocaudio', pmic))
         save(out, 'codec-debugfs-%s.txt' % label, adb('cat /sys/kernel/debug/mtksocanaaudio', pmic))
         save(out, 'clk-%s.txt' % label, keep(adb('cat /sys/kernel/debug/clk/clk_summary', pmic), r'aud|apll|i2c|clock\s+enable'))
-    save(out, 'pins-%s.txt' % label, keep(adb('cat /sys/devices/platform/*pinctrl*/mt_gpio', pmic), r'^\s*(164|183|184|185|186)\s*:'))
+    save(out, 'pins-%s.txt' % label, keep(adb('cat /sys/devices/platform/*pinctrl*/mt_gpio', pmic), r'^\s*(164|18[3-9]|190)\s*:'))
     save(out, 'mixer-%s.txt' % label, adb('cat /proc/asound/cards', pmic) + adb('dumpsys media.audio_flinger', pmic) +
          keep(adb('dumpsys audio', pmic), r'speaker|route|device|volume'))
 
