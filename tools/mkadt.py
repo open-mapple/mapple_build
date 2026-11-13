@@ -2,7 +2,7 @@
 """Build the minimal Apple Device Tree that the MT6781 xnu needs to boot.
 
 Only what the early boot path actually reads (see NOTES.md); every MMIO
-address comes from the sweet live FDT. Usage:  mkadt.py OUT.adt [--dump] [--qemu] [--highmem] [--viva|--spaced [--ufs] [--haptics|--audio]] [--canvas=WxH]
+address comes from the sweet live FDT. Usage:  mkadt.py OUT.adt [--dump] [--qemu] [--highmem] [--viva|--spaced [--ufs] [--haptics|--audio] [--torch]] [--canvas=WxH]
 """
 import hashlib, os, struct, sys
 
@@ -257,7 +257,7 @@ def mapple_devices(ph, phandle, gic_ph, ecid):
     ]
 
 
-def spaced_devices(ph, phandle, gic_ph, ecid, audio=False):
+def spaced_devices(ph, phandle, gic_ph, ecid, audio=False, torch=False):
     """realme 8i /arm-io devices: viva's MT6781 blocks, its own keys and touch screen; nothing for chips it lacks."""
     io = lambda pa, size: u64(pa - SOC_BASE, size)
     eint_ph = next(phandle)
@@ -320,7 +320,23 @@ def spaced_devices(ph, phandle, gic_ph, ecid, audio=False):
             ('clock-div', u32(5)),
             ('ext-time-config', u32(0x1801)),
         ]),
-    ] if audio else []) + [
+    ] if audio else []) + ([
+        # --torch: I2C5 for the flash LED's chip (MT6371 PMU at 0x34, also the charger and the backlight;
+        # bsd/dev/mtk_torch.c talks to it by bus number); the live DT's i2c5: SPI 354, gate bit 5, clock-div 5.
+        node('i2c5', [
+            ph(),
+            ('compatible', cstr('mediatek,mt6781-i2c')),
+            ('reg', io(0x11016000, 0x1000) + io(0x11017000, 0x1000)),
+            ('interrupt-parent', u32(gic_ph)),
+            ('interrupts', spi(0x162, IRQ_LEVEL_HIGH)),
+            ('bus-id', u32(5)),
+            ('imp-cg-bit', u32(5)),
+            ('clock-frequency', u32(400000)),
+            ('source-clock', u32(124800000)),
+            ('clock-div', u32(5)),
+            ('ext-time-config', u32(0x1801)),
+        ]),
+    ] if torch else []) + [
         # ILI7807S touch (iokit/Kernel/arm/hid/ILI7807S.cpp): SPI4's pins by hand, a report per low pulse on
         # EINT 12; firmware sent by mtkloader before the shim (mp_ili_fw= for sending it again).
         node('touch', [
@@ -356,7 +372,8 @@ def spaced_devices(ph, phandle, gic_ph, ecid, audio=False):
     ]
 
 
-def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False, spaced=False, audio=False, haptics=False):
+def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False, spaced=False, audio=False, haptics=False,
+          torch=False):
     """qemu=True: same tree, but with QEMU virt's GIC addresses and CNTFRQ (tools/qemu-sweet.py).
     viva=True: Redmi Note 11 Pro 4G addresses. Without mapple_ufs there is no UFS node, so the
     kernel never touches storage; with it the kernel drives the MediaTek host LK left running."""
@@ -496,7 +513,7 @@ def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False, sp
             ('compatible', cstr('mapple,display')),
             ('canvas-width', u32(CANVAS[0])),
             ('canvas-height', u32(CANVAS[1])),
-        ])] + (spaced_devices(ph, phandle, gic_ph, ecid, audio) if spaced else mapple_devices(ph, phandle, gic_ph, ecid) if viva else []))
+        ])] + (spaced_devices(ph, phandle, gic_ph, ecid, audio, torch) if spaced else mapple_devices(ph, phandle, gic_ph, ecid) if viva else []))
 
     fbcon = node('mapple-fbcon', [
         ph(),
@@ -572,7 +589,7 @@ if __name__ == '__main__':
             CANVAS[0], CANVAS[1] = int(w), int(h)
     root = build(qemu='--qemu' in sys.argv, highmem='--highmem' in sys.argv, viva='--viva' in sys.argv,
                  mapple_ufs='--ufs' in sys.argv, spaced='--spaced' in sys.argv, audio='--audio' in sys.argv,
-                 haptics='--haptics' in sys.argv)
+                 haptics='--haptics' in sys.argv, torch='--torch' in sys.argv)
     blob = adt.serialize(root)
     open(sys.argv[1], 'wb').write(blob)
     if '--dump' in sys.argv:
