@@ -2,7 +2,7 @@
 """Build the minimal Apple Device Tree that the MT6781 xnu needs to boot.
 
 Only what the early boot path actually reads (see NOTES.md); every MMIO
-address comes from the sweet live FDT. Usage:  mkadt.py OUT.adt [--dump] [--qemu] [--highmem] [--viva|--spaced [--ufs]] [--canvas=WxH]
+address comes from the sweet live FDT. Usage:  mkadt.py OUT.adt [--dump] [--qemu] [--highmem] [--viva|--spaced [--ufs] [--audio]] [--canvas=WxH]
 """
 import hashlib, os, struct, sys
 
@@ -257,7 +257,7 @@ def mapple_devices(ph, phandle, gic_ph, ecid):
     ]
 
 
-def spaced_devices(ph, phandle, gic_ph, ecid):
+def spaced_devices(ph, phandle, gic_ph, ecid, audio=False):
     """realme 8i /arm-io devices: viva's MT6781 blocks, its own keys and touch screen; nothing for chips it lacks."""
     io = lambda pa, size: u64(pa - SOC_BASE, size)
     eint_ph = next(phandle)
@@ -296,13 +296,31 @@ def spaced_devices(ph, phandle, gic_ph, ecid):
             ('compatible', cstr('mediatek,mt6366-keys')),
             ('keymap', u32(0, HID_CSMR_POWER, 1, HID_CSMR_VOLUME_UP)),
         ])])]),
-        # GPIO: only the touch screen's SPI4 pins driven by hand (MOSI 13, CLK 144, CS 145; MISO 14 is an input).
+        # GPIO: only the touch screen's SPI4 pins driven by hand (MOSI 13, CLK 144, CS 145; MISO 14 is an input);
+        # with --audio the speaker amplifier's enable / one-wire pin too (164, bsd/dev/mtk_audio.c).
         node('gpio', [
             ph(),
             ('compatible', cstr('mediatek,mt6781-gpio')),
             ('reg', io(0x10005000, 0x1000)),
-            ('output-pins', u32(13, 144, 145)),
+            ('output-pins', u32(13, 144, 145, *((164,) if audio else ()))),
         ]),
+    ] + ([
+        # --audio: I2C3 for the speaker amplifier (AW87319 0x58 or SIA8109 0x28, the live DT's aw87319 / sia81xx-i2c);
+        # the controller as on viva (same SoC), no children: bsd/dev/mtk_audio.c talks to it by bus number.
+        node('i2c3', [
+            ph(),
+            ('compatible', cstr('mediatek,mt6781-i2c')),
+            ('reg', io(0x1100f000, 0x1000) + io(0x11017000, 0x1000)),
+            ('interrupt-parent', u32(gic_ph)),
+            ('interrupts', spi(0x6c, IRQ_LEVEL_HIGH)),
+            ('bus-id', u32(3)),
+            ('imp-cg-bit', u32(3)),
+            ('clock-frequency', u32(400000)),
+            ('source-clock', u32(124800000)),
+            ('clock-div', u32(5)),
+            ('ext-time-config', u32(0x1801)),
+        ]),
+    ] if audio else []) + [
         # ILI7807S touch (iokit/Kernel/arm/hid/ILI7807S.cpp): SPI4's pins by hand, a report per low pulse on
         # EINT 12; firmware sent by mtkloader before the shim (mp_ili_fw= for sending it again).
         node('touch', [
@@ -338,7 +356,7 @@ def spaced_devices(ph, phandle, gic_ph, ecid):
     ]
 
 
-def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False, spaced=False):
+def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False, spaced=False, audio=False):
     """qemu=True: same tree, but with QEMU virt's GIC addresses and CNTFRQ (tools/qemu-sweet.py).
     viva=True: Redmi Note 11 Pro 4G addresses. Without mapple_ufs there is no UFS node, so the
     kernel never touches storage; with it the kernel drives the MediaTek host LK left running."""
@@ -478,7 +496,7 @@ def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False, sp
             ('compatible', cstr('mapple,display')),
             ('canvas-width', u32(CANVAS[0])),
             ('canvas-height', u32(CANVAS[1])),
-        ])] + (spaced_devices(ph, phandle, gic_ph, ecid) if spaced else mapple_devices(ph, phandle, gic_ph, ecid) if viva else []))
+        ])] + (spaced_devices(ph, phandle, gic_ph, ecid, audio) if spaced else mapple_devices(ph, phandle, gic_ph, ecid) if viva else []))
 
     fbcon = node('mapple-fbcon', [
         ph(),
@@ -517,7 +535,10 @@ def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False, sp
         product_props = [(k, cstr('sRGB') if k == 'artwork-display-gamut' else v) for k, v in product_props]
     if product_props and spaced:
         product_props = [(k, cstr('realme 8i') if k == 'product-name' else v) for k, v in product_props]
-    product = [node('product', [ph()] + product_props)] if product_props else []
+    # --audio: /product/haptics as the iPhone X has it. MobileGestalt's DeviceSupportsClosedLoopHaptics comes from it,
+    # and only then does iOS play its haptics as waveforms on the audio plug-in's "Actuator" (/dev/mapple-haptic).
+    haptics = [node('haptics', [ph(), ('closed-loop', u32(1)), ('supports-3rd-party-haptics', u32(1))])] if audio else []
+    product = [node('product', [ph()] + product_props, haptics)] if product_props else []
 
     # What About shows (MobileGestalt): model-number + region-info, regulatory-model-number, /product product-name.
     # serial-number is a placeholder the shim overwrites at each boot with LK's androidboot.serialno.
@@ -550,7 +571,7 @@ if __name__ == '__main__':
             w, h = a.split('=', 1)[1].split('x')
             CANVAS[0], CANVAS[1] = int(w), int(h)
     root = build(qemu='--qemu' in sys.argv, highmem='--highmem' in sys.argv, viva='--viva' in sys.argv,
-                 mapple_ufs='--ufs' in sys.argv, spaced='--spaced' in sys.argv)
+                 mapple_ufs='--ufs' in sys.argv, spaced='--spaced' in sys.argv, audio='--audio' in sys.argv)
     blob = adt.serialize(root)
     open(sys.argv[1], 'wb').write(blob)
     if '--dump' in sys.argv:
