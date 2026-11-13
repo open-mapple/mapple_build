@@ -257,7 +257,7 @@ def mapple_devices(ph, phandle, gic_ph, ecid):
     ]
 
 
-def spaced_devices(ph, phandle, gic_ph):
+def spaced_devices(ph, phandle, gic_ph, ecid):
     """realme 8i /arm-io devices: viva's MT6781 blocks, its own keys and touch screen; nothing for chips it lacks."""
     io = lambda pa, size: u64(pa - SOC_BASE, size)
     eint_ph = next(phandle)
@@ -324,6 +324,13 @@ def spaced_devices(ph, phandle, gic_ph):
                     io(0x10000000, 0x1000) + io(0x1000c000, 0x1000) + io(0x10001000, 0x1000)),
             ('interrupt-parent', u32(gic_ph)),
             ('interrupts', spi(0x112, IRQ_LEVEL_HIGH) + spi(0x113, IRQ_LEVEL_HIGH) + spi(0x114, IRQ_LEVEL_HIGH)),
+        ]),
+        # CONNSYS WiFi, as viva's: MT6631WLAN.cpp matches it; launchd starts wifid only with a node named "wlan".
+        node('wlan', [
+            ph(),
+            ('device_type', cstr('wlan')),
+            ('compatible', cstr('mediatek,mt6781-wlan')),
+            ('local-mac-address', wifi_mac(ecid)),
         ]),
     ]
 
@@ -468,7 +475,7 @@ def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False, sp
             ('compatible', cstr('mapple,display')),
             ('canvas-width', u32(CANVAS[0])),
             ('canvas-height', u32(CANVAS[1])),
-        ])] + (spaced_devices(ph, phandle, gic_ph) if spaced else mapple_devices(ph, phandle, gic_ph, ecid) if viva else []))
+        ])] + (spaced_devices(ph, phandle, gic_ph, ecid) if spaced else mapple_devices(ph, phandle, gic_ph, ecid) if viva else []))
 
     fbcon = node('mapple-fbcon', [
         ph(),
