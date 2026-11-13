@@ -12,7 +12,8 @@ screen (image versions v8-v14 in NOTES.md):
   launchd.plist   _PanicOnCrash -> _PanicOnCrasX (a crashing daemon must not
                   panic the system); CommCenter jobs removed (no baseband: it
                   crash-loops and Setup blocks on its CoreTelephony XPC); bluetoothd
-                  too, unless DEVICE's device.conf has `bluetooth 1`
+                  too, unless DEVICE's device.conf has `bluetooth 1`; mediaserverd's
+                  com.apple.coremedia.capturesource (no recorder server to answer it)
   containers      /private/var/containers/{Bundle,Data/System,Shared/SystemGroup,Temp}
                   (on iOS they live on the data volume)
   migration       LastSystemVersion so DataMigration does not run for an hour
@@ -75,6 +76,11 @@ def launchd(root, bluetooth):
     removed = [k for k, j in jobs.items() if j.get('Label') in labels]
     for k in removed:
         del jobs[k]
+    # the recorder server is off (MediaToolbox below): its capture source would never answer, and SpringBoard waits on
+    # it with no timeout when the mic indicator comes on; without the name a client's lookup fails at once
+    for job in jobs.values():
+        if job.get('Label') == 'com.apple.mediaserverd':
+            job.get('MachServices', {}).pop('com.apple.coremedia.capturesource', None)
     save(path, plist, st.st_uid, st.st_gid, st.st_mode & 0o7777)
     print(f'launchd.plist: {renamed} _PanicOnCrash renamed, {len(removed)} jobs removed')
 
