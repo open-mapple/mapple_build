@@ -23,10 +23,26 @@ BM=$TOP/build/mapple
 DEV=$TARGET_DEVICE_DIR
 OBJ=$OUT/obj
 COMMON_CONF=$TOP/vendor/mapple/config/common.conf
-mkdir -p "$OBJ"
+INSTALL=${TARGET_INSTALL:-dev}
+# What a device's products differ in (loader flags, boot-args: the loader, payload, boot image, zip) goes in $P:
+# $OUT for the development layout, $OUT/single or $OUT/split for the others; the rest is shared.
+P=$OUT
+[ "$INSTALL" = dev ] || P=$OUT/$INSTALL
+mkdir -p "$OBJ" "$P"
 
 conf() {	# conf KEY FILE: the value of KEY (tab-indented in device.conf, at the start of a line in common.conf)
 	sed -n "s/^	\{0,1\}$1	//p" "$2" | head -1
+}
+# merge LINE PAIRS: LINE's key=value words with PAIRS' values, PAIRS' new keys added
+merge() {
+	local out=" $1 " kv
+	for kv in $2; do
+		case $out in
+		*" ${kv%%=*}="*) out=$(echo "$out" | sed "s| ${kv%%=*}=[^ ]*| $kv|") ;;
+		*) out="$out$kv " ;;
+		esac
+	done
+	echo $out
 }
 need() { [ -f "$1" ] || { echo "mka: no $1 ($2)" >&2; exit 1; }; }
 say() { echo "== $*"; }
@@ -160,8 +176,8 @@ step_loader() {
 	[ ! -f "$DEV/fw-touch/hdl_firmware.img" ] || touch=$DEV/fw-touch/hdl_firmware.img
 	printf 'CONFIG_SOC="%s"\n' "$SOC" > "$L/.config"
 	# shellcheck disable=SC2046
-	(cd "$L/mtk/loader" && TOUCH_IMG=$touch LLD=${LLD:-ld.lld} ./build.sh $(conf loader "$DEV/device.conf") >/dev/null)
-	cp "$L/mtk/loader/mtkloader.bin" "$OUT/"
+	(cd "$L/mtk/loader" && TOUCH_IMG=$touch LLD=${LLD:-ld.lld} ./build.sh $(conf loader "$DEV/device.conf") $(conf "${INSTALL}_loader" "$DEV/device.conf") >/dev/null)
+	cp "$L/mtk/loader/mtkloader.bin" "$P/"
 }
 
 step_adt() {
@@ -171,15 +187,16 @@ step_adt() {
 
 step_payload() {
 	local cmdline size max kver c
-	cmdline="$(conf cmdline "$COMMON_CONF") $(conf cmdline "$DEV/device.conf")"
-	python3 "$BM/tools/mkpayload.py" "$OUT/kernel" "$OUT/$TARGET_DEVICE.adt" "$OUT/xnu.bin" --cmdline "$cmdline" >/dev/null
-	size=$(stat -f %z "$OUT/xnu.bin") max=$(conf payload_max "$DEV/device.conf")
+	cmdline=$(merge "$(conf cmdline "$COMMON_CONF") $(conf cmdline "$DEV/device.conf")" "$(conf "${INSTALL}_cmdline" "$DEV/device.conf")")
+	python3 "$BM/tools/mkpayload.py" "$OUT/kernel" "$OUT/$TARGET_DEVICE.adt" "$P/xnu.bin" --cmdline "$cmdline" >/dev/null
+	echo "$cmdline" > "$P/cmdline"
+	size=$(stat -f %z "$P/xnu.bin") max=$(conf payload_max "$DEV/device.conf")
 	[ "$size" -lt $((max)) ] || { echo "mka: xnu.bin: $size bytes, over $max" >&2; exit 1; }
 	c=$TOP/kernel/mediatek/common
 	kver=mapple-$SOC-g$(git -C "$c" rev-parse --short=8 HEAD)
 	[ -z "$(git -C "$c" status --porcelain --untracked-files=no)" ] || kver=$kver-dirty
-	python3 "$BM/tools/mkxnup.py" -o "$OUT/xnup.bin" --kernel-version "$kver" \
-		shim="$OUT/shim.Image" xnu="$OUT/xnu.bin" >/dev/null
+	python3 "$BM/tools/mkxnup.py" -o "$P/xnup.bin" --kernel-version "$kver" \
+		shim="$OUT/shim.Image" xnu="$P/xnu.bin" >/dev/null
 }
 
 # mapple-install (installer/), static for the phone's recovery and for this Mac (bootimage, dry runs), with zig from
@@ -200,11 +217,11 @@ step_installer() {
 
 step_bootimage() {
 	if [ -z "${ANDROID_BOOT:-}" ]; then
-		say "bootimage skipped: ANDROID_BOOT=<a backup of your phone's boot partition> makes $OUT/boot.img"
+		say "bootimage skipped: ANDROID_BOOT=<a backup of your phone's boot partition> makes $P/boot.img"
 		return
 	fi
 	need "$ANDROID_BOOT" "ANDROID_BOOT="
-	"$OBJ/installer/mapple-install" chain "$ANDROID_BOOT" "$OUT/mtkloader.bin" "$OUT/xnup.bin" --out "$OUT/boot.img" >/dev/null
+	"$OBJ/installer/mapple-install" chain "$ANDROID_BOOT" "$P/mtkloader.bin" "$P/xnup.bin" --out "$P/boot.img" >/dev/null
 }
 
 # What the root gets on top of the IPSW's files and root-tweaks.py, staged in $OUT/root (installed by rootimage):
@@ -270,29 +287,34 @@ step_rootsparse() {
 	python3 "$BM/tools/rootranges.py" "$OUT/system.img" "$OUT/root.img" "$OUT/root.ranges"
 }
 
-# The recovery zip (installer/update-binary): personal, as the payload carries your IPSW's device tree and your
-# phone's touch firmware.
+# The recovery zip (installer/update-binary), for the single and split products: personal, as the payload carries
+# your IPSW's device tree. A split product also gets its uninstall zip.
 step_zip() {
 	local Z=$OBJ/zip f
-	for f in mapple-install mtkloader.bin xnup.bin root.ranges; do need "$OUT/$f" "mka mapple"; done
+	[ "$INSTALL" != dev ] || { echo "mka: the development layout has no zip: lunch mapple_${TARGET_DEVICE}_single (or _split)" >&2; exit 1; }
+	for f in "$OUT/mapple-install" "$P/mtkloader.bin" "$P/xnup.bin" "$OUT/root.ranges"; do need "$f" "mka mapple"; done
 	rm -rf "$Z"; mkdir -p "$Z/META-INF/com/google/android"
 	cp "$BM/installer/update-binary" "$Z/META-INF/com/google/android/"
 	echo "#dummy" > "$Z/META-INF/com/google/android/updater-script"
-	cp "$OUT/mapple-install" "$OUT/mtkloader.bin" "$OUT/xnup.bin" "$OUT/root.ranges" "$Z/"
-	# a splitboot product (device.conf's split_size): the zip carves xnusys first
-	[ -z "$(conf split_size "$DEV/device.conf")" ] || conf split_size "$DEV/device.conf" > "$Z/split_size"
-	(cd "$Z" && shasum -a 256 mapple-install mtkloader.bin xnup.bin root.ranges $(ls split_size 2>/dev/null) > SHA256SUMS)
-	f=$OUT/mapple-$(conf ios_build "$COMMON_CONF")-$(date +%Y%m%d)-$TARGET_DEVICE-PERSONAL.zip
-	rm -f "$OUT"/mapple-*-"$TARGET_DEVICE"-PERSONAL.zip "$OUT"/mapple-*-"$TARGET_DEVICE"-uninstall.zip
-	(cd "$Z" && zip -q -X -r "$f" META-INF mapple-install mtkloader.bin xnup.bin root.ranges SHA256SUMS $(ls split_size 2>/dev/null))
-	if [ -f "$Z/split_size" ]; then
-		f=${f%-PERSONAL.zip}-uninstall.zip
-		echo split-uninstall > "$Z/uninstall"
-		(cd "$Z" && shasum -a 256 mapple-install uninstall > SHA256SUMS && rm -f "$f" &&
-			zip -q -X -r "$f" META-INF mapple-install uninstall SHA256SUMS)
-		say "$f"
+	cp "$OUT/mapple-install" "$P/mtkloader.bin" "$P/xnup.bin" "$OUT/root.ranges" "$Z/"
+	set -- mapple-install mtkloader.bin xnup.bin root.ranges
+	if [ "$INSTALL" = split ]; then
+		grep -q split-carve "$OUT/mapple-install" ||
+			{ echo "mka: mapple-install has no split- verbs: mapple/splitboot/installer/ in the tree, then mka installer" >&2; exit 1; }
+		conf split_size "$DEV/device.conf" > "$Z/split_size"
+		set -- "$@" split_size
 	fi
-	say "$f"
+	(cd "$Z" && shasum -a 256 "$@" > SHA256SUMS)
+	f=$P/mapple-$(conf ios_build "$COMMON_CONF")-$(date +%Y%m%d)-${TARGET_PRODUCT#mapple_}
+	rm -f "$P"/mapple-*-"${TARGET_PRODUCT#mapple_}"-*.zip
+	(cd "$Z" && zip -q -X -r "$f-PERSONAL.zip" META-INF "$@" SHA256SUMS)
+	say "$f-PERSONAL.zip"
+	if [ "$INSTALL" = split ]; then
+		echo split-uninstall > "$Z/uninstall"
+		(cd "$Z" && shasum -a 256 mapple-install uninstall > SHA256SUMS &&
+			zip -q -X -r "$f-uninstall.zip" META-INF mapple-install uninstall SHA256SUMS)
+		say "$f-uninstall.zip"
+	fi
 }
 
 for t in $targets; do
@@ -303,5 +325,6 @@ for t in $targets; do
 	esac
 	for s in "$@"; do say "$s"; "step_$s"; done
 done
-(cd "$OUT" && ls kernel shim.Image mtkloader.bin "$TARGET_DEVICE.adt" xnu.bin xnup.bin boot.img root.ranges 2>/dev/null |
-	xargs shasum -a 256 > SHA256SUMS; cat SHA256SUMS)
+r=${P#"$OUT"}; r=${r#/}${r:+/}
+(cd "$OUT" && for f in kernel shim.Image "$TARGET_DEVICE.adt" root.ranges "${r}mtkloader.bin" "${r}xnu.bin" \
+	"${r}xnup.bin" "${r}boot.img"; do [ ! -f "$f" ] || shasum -a 256 "$f"; done > "${r}SHA256SUMS"; cat "${r}SHA256SUMS")
