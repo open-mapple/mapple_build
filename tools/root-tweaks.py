@@ -11,7 +11,8 @@ screen (image versions v8-v14 in NOTES.md):
 
   launchd.plist   _PanicOnCrash -> _PanicOnCrasX (a crashing daemon must not
                   panic the system); CommCenter jobs removed (no baseband: it
-                  crash-loops and Setup blocks on its CoreTelephony XPC)
+                  crash-loops and Setup blocks on its CoreTelephony XPC); bluetoothd
+                  too, unless DEVICE's device.conf has `bluetooth 1`
   containers      /private/var/containers/{Bundle,Data/System,Shared/SystemGroup,Temp}
                   (on iOS they live on the data volume)
   migration       LastSystemVersion so DataMigration does not run for an hour
@@ -57,7 +58,7 @@ def merge_pref(root, name, values):
     print('pref', name, sorted(values))
 
 
-def launchd(root):
+def launchd(root, bluetooth):
     path = os.path.join(root, 'System/Library/xpc/launchd.plist')
     st = os.stat(path)
     plist = load(path)
@@ -68,7 +69,7 @@ def launchd(root):
             job['_PanicOnCrasX'] = job.pop('_PanicOnCrash')
             renamed += 1
     # no baseband; bluetoothd and fairplayd.H2 restart in a loop without Bluetooth and media support
-    labels = ('com.apple.CommCenter', 'com.apple.bluetoothd', 'com.apple.fairplayd.H2')
+    labels = ('com.apple.CommCenter', 'com.apple.fairplayd.H2') + (() if bluetooth else ('com.apple.bluetoothd',))
     removed = [k for k, j in jobs.items() if j.get('Label') in labels]
     for k in removed:
         del jobs[k]
@@ -158,7 +159,8 @@ def main():
     if len(sys.argv) not in (2, 3) or not os.path.isdir(os.path.join(sys.argv[1], 'System/Library/xpc')):
         sys.exit(__doc__)
     root = sys.argv[1]
-    launchd(root)
+    conf = device_conf(sys.argv[2]) if len(sys.argv) == 3 else {}
+    launchd(root, conf.get('bluetooth') == '1')
     containers(root)
     activation(root)
     audio(root)
@@ -179,7 +181,7 @@ def main():
                            'SilentICDPUpgrade')})
     merge_pref(root, 'com.apple.managedconfiguration.notbackedup', {
         'LockdownActivationIndicatesCloudConfigurationAvailable': False})
-    if len(sys.argv) == 3 and device_conf(sys.argv[2]).get('light_ui') == '1':
+    if conf.get('light_ui') == '1':
         light_ui(root)
 
 
