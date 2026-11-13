@@ -65,7 +65,7 @@ def emit_empty(label):
     # dt_identity copies it as an empty, harmless property; dt_identity_one never matches it. This
     # avoids a zero-length array (not standard C) while carrying no Apple-derived data.
     print(f'/* placeholder: no properties (built without an IPSW) */')
-    print(f'static const struct identity_prop {label}[] = {{ {{ "hakios-placeholder", 0, 0 }} }};')
+    print(f'static const struct identity_prop {label}[] = {{ {{ "mapple-placeholder", 0, 0 }} }};')
     print(f'static const unsigned char {label}_data[] = {{ 0 }};\n')
 
 

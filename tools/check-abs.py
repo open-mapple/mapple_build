@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Minimal ELF64 helper for the viva shim build (no binutils on macOS).
+"""Minimal ELF64 helper for the shim build (no binutils on macOS).
 
-  viva-check-abs.py OBJ...            fail if any object has R_AARCH64_ABS64 relocations
-  viva-check-abs.py --symbol NAME ELF print the symbol's value (decimal)
+  check-abs.py OBJ...            fail if any object has R_AARCH64_ABS64 relocations
+  check-abs.py --symbol NAME ELF print the symbol's value (decimal)
 """
 import struct
 import sys

@@ -6,7 +6,7 @@ Build the "XNUP" payload consumed by the boot shim and the XNU loader.
   entries: char name[16], u32 size, u32 reserved, data padded to 16 bytes
   end    : an entry whose name is empty
 
-usage: mkpayload.py -o payload.bin name=file [name=file ...] [--cmdline "..."]
+usage: mkxnup.py -o payload.bin name=file [name=file ...] [--cmdline "..."]
 """
 import argparse, struct
 
@@ -43,7 +43,7 @@ if args.usb:
 if args.checkpoint:
     add('checkpoint', args.checkpoint.encode() + b'\0')
 # The version of the kernel in this payload, which the loader prints as "kernel.ver=" under its banner and
-# hands to the kernel as the boot-arg hakios_kver. A loader that does not know the entry skips it.
+# hands to the kernel as the boot-arg mapple_kver. A loader that does not know the entry skips it.
 if not args.no_version:
     version = args.kernel_version
     if not version:
@@ -52,7 +52,7 @@ if not args.no_version:
         try:
             version = subprocess.run([sys.executable, tool], capture_output=True, text=True, check=True).stdout.strip()
         except (OSError, subprocess.CalledProcessError) as e:
-            print('mkpayload.py: no kernel.ver (tools/kernel-version.py failed: %s)' % e, file=sys.stderr)
+            print('mkxnup.py: no kernel.ver (tools/kernel-version.py failed: %s)' % e, file=sys.stderr)
     if version:
         add('kernel.ver', version.encode() + b'\0')
 body += b'\0' * 24
