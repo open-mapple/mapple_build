@@ -8,7 +8,7 @@
 # fastboot flash xnusys root.img; with it, the root is on xnusys and split-chain saves and chains boot.
 # An uninstall zip (member uninstall) gives xnusys back to userdata and the saved boot back to boot (split-uninstall).
 # Dry runs on a Mac: MAPPLE_DEVICE=spaced, MAPPLE_BLOCK=dir (files boot, userdata, xnusys), MAPPLE_DISK=file,
-# MAPPLE_FW=dir (vendor/, odm/).
+# MAPPLE_FW=dir (vendor/, odm/), MAPPLE_TP=file (for /proc/devinfo/tp).
 OUTFD=$2 ZIP=$3 D=/tmp/mapple DISK=
 B=${MAPPLE_BLOCK:-/dev/block/by-name}/boot U=${MAPPLE_BLOCK:-/dev/block/by-name}/userdata
 CONNSYS="soc2_2_ram_mcu_2_1_hdr.bin soc2_2_ram_wifi_2_1_hdr.bin soc2_2_ram_bt_2_1_hdr.bin
@@ -72,8 +72,22 @@ else
 	mount -o ro /dev/block/mapper/odm "$O" || fail "cannot mount odm"
 fi
 for f in $CONNSYS; do cp "$V/firmware/$f" "$D/fw/connsys/" || fail "no $f in vendor"; done
-cp "$O"/firmware/tp/*/FW_NF_ILI7807S_*.bin "$D/fw/touch/" 2>/dev/null ||
-	cp "$O"/firmware/FW_NF_ILI7807S_*.bin "$D/fw/touch/" || fail "no touch firmware in odm"
+# the panel's own file, as /proc/devinfo/tp names it ("fw_path: tp/21684/FW_NF_ILI7807S_BOE.bin"); without it, the
+# only one there is. mtkloader reads touch/ilifw.bin from the tail at boot.
+tp=$(sed -n 's/.*fw_path:[[:space:]]*//p' "${MAPPLE_TP:-/proc/devinfo/tp}" 2>/dev/null)
+if [ -n "$tp" ]; then
+	t=$O/firmware/$tp
+else
+	t=
+	for c in "$O"/firmware/tp/*/FW_NF_ILI7807S_*.bin "$O"/firmware/FW_NF_ILI7807S_*.bin; do
+		[ -f "$c" ] || continue
+		[ -z "$t" ] || fail "two touch firmware files in odm, and no /proc/devinfo/tp to choose"
+		t=$c
+	done
+fi
+[ -f "$t" ] || fail "no touch firmware in odm"
+cp "$t" "$D/fw/touch/" || fail "cannot copy $t"
+run ilifw "$t" "$D/fw/touch/ilifw.bin" || fail "the touch firmware does not convert"
 [ -n "$MAPPLE_FW" ] || umount "$V" "$O"
 (cd "$D/fw" && tar -cf "$D/fw.tar" connsys touch) || fail "cannot pack the firmware"
 

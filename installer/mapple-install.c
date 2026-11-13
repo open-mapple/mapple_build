@@ -10,6 +10,8 @@
  *   mapple-install save DEV NAME FILE
  *	FILE kept in DEV's saved area under NAME (boot), its header updated; read back and hashed. NAME chained
  *	records only FILE's size and SHA-256 (the boot image as we chained it)
+ *   mapple-install ilifw FIRMWARE OUT
+ *	the touch firmware (FW_NF_ILI7807S_*.bin, from the phone's odm) as mtkloader's item ilifw
  *   mapple-install chain BOOT LOADER PAYLOAD [--backup FILE] [--out FILE]
  *	the loader put in front of the Android kernel of BOOT (a boot partition, or a copy of one) and the payload
  *	after it; written to --out, or back to BOOT, then read back and hashed. --backup keeps BOOT as it was, if it
@@ -551,6 +553,136 @@ int chain(int argc, char **argv)
 	return 0;
 }
 
+/* --- ilifw ----------------------------------------------------------------------------------------------------- */
+
+/*
+ * The ILI7807S's touch firmware as the item mtkloader loads (mtkili.h has the layout), from the phone's
+ * FW_NF_ILI7807S_*.bin: the same bytes as mapple/loader's mtk/tools/mkilifw.py, which describes the format.
+ */
+#define ILI_MAX		(160 * 1024)
+#define ILI_HEAD	64
+
+static uint32_t crc32_msb(const uint8_t *d, size_t n)
+{
+	uint32_t crc = 0xffffffff;
+
+	while (n--) {
+		crc ^= (uint32_t)*d++ << 24;
+		for (int i = 0; i < 8; i++)
+			crc = crc & 0x80000000 ? crc << 1 ^ 0x04c11db7 : crc << 1;
+	}
+	return crc;
+}
+
+static long hexn(const char *p, int n)
+{
+	long v = 0;
+
+	while (n--) {
+		int c = *p++;
+		if (c >= '0' && c <= '9') v = v << 4 | (c - '0');
+		else if (c >= 'a' && c <= 'f') v = v << 4 | (c - 'a' + 10);
+		else if (c >= 'A' && c <= 'F') v = v << 4 | (c - 'A' + 10);
+		else return -1;
+	}
+	return v;
+}
+
+static int ilifw(const char *in, const char *out_path)
+{
+	static uint8_t image[ILI_MAX];
+	static const char *const names[4] = { "", "AP", "DATA", "TUNING" };
+	long start[4] = { -1, -1, -1, -1 }, end[4] = { 0 }, fixed[4] = { -1, -1, -1, -1 }, mem[4];
+	size_t n, len, off = ILI_HEAD;
+	uint8_t *raw = load(in, &n), *item, *rest, *p = memchr(raw, ':', n), *e = raw + n;
+	uint32_t ext = 0, h = 0x811c9dc5;
+	int fd;
+
+	if (!p)
+		die("%s: no Intel HEX in it", in);
+	memset(image, 0xff, sizeof(image));
+	while (p < e) {
+		uint8_t *q = p, *l;
+		long cnt, addr, kind;
+
+		while (q < e && *q != '\n' && *q != '\r')
+			q++;
+		l = p;
+		p = q + 1;
+		while (l < q && (*l == ' ' || *l == '\t'))
+			l++;
+		while (q > l && (q[-1] == ' ' || q[-1] == '\t'))
+			q--;
+		if (q - l < 11 || *l != ':')
+			continue;
+		cnt = hexn((char *)l + 1, 2); addr = hexn((char *)l + 3, 4); kind = hexn((char *)l + 7, 2);
+		if (cnt < 0 || addr < 0 || kind < 0 || q - l < 9 + 2 * cnt)
+			die("%s: a bad HEX record", in);
+		const char *d = (char *)l + 9;
+		if (cnt < (kind == 0xaf ? 7 : kind == 0xb0 ? 4 : kind == 0x02 || kind == 0x04 ? 2 : 0))
+			die("%s: a short HEX record", in);
+		if (kind == 0x04) {
+			ext = (uint32_t)hexn(d, 4);
+		} else if (kind == 0x02) {
+			ext = (uint32_t)hexn(d, 4) >> 12;
+		} else if (kind == 0xaf) {
+			long b = hexn(d + 12, 2);
+			if (b >= 1 && b <= 3) { start[b] = hexn(d, 6); end[b] = hexn(d + 6, 6); }
+		} else if (kind == 0xb0) {
+			long b = hexn(d + 6, 2);
+			if (b >= 1 && b <= 3) fixed[b] = hexn(d, 6);
+		} else if (kind == 0x00) {
+			uint32_t at = (uint32_t)addr + (ext << 16);
+			if (at + cnt > ILI_MAX)
+				die("%s: data past %d KB at %#x", in, ILI_MAX / 1024, at);
+			for (long i = 0; i < cnt; i++) {
+				long v = hexn(d + 2 * i, 2);
+				if (v < 0)
+					die("%s: a bad HEX record", in);
+				image[at + i] = (uint8_t)v;
+			}
+		}
+	}
+	for (int b = 1; b <= 3; b++)
+		if (start[b] < 0 || end[b] < start[b] + 4 || end[b] >= ILI_MAX)
+			die("%s: no block %s", in, names[b]);
+	mem[1] = fixed[1] >= 0 ? fixed[1] : 0;
+	mem[2] = fixed[2] >= 0 ? fixed[2] : 0x20610;
+	mem[3] = fixed[3] >= 0 ? fixed[3] : mem[2] + end[2] - start[2] + 1;
+
+	len = ILI_HEAD;
+	for (int b = 1; b <= 3; b++)
+		len += (size_t)(end[b] - start[b] + 1 + 15) / 16 * 16;
+	if (!(item = calloc(1, len)))
+		die("out of memory");
+	rest = item + 16;
+	for (int b = 1; b <= 3; b++) {
+		const uint8_t *body = image + start[b];
+		size_t bl = (size_t)(end[b] - start[b] + 1);
+		uint32_t crc = crc32_msb(body, bl - 4);
+
+		if (crc != be32(body + bl - 4))
+			die("%s: block %s's CRC %08x is not the one it carries (%08x)", in, names[b], crc, be32(body + bl - 4));
+		put32(rest + 16 * (b - 1), (uint32_t)mem[b]);
+		put32(rest + 16 * (b - 1) + 4, (uint32_t)bl);
+		put32(rest + 16 * (b - 1) + 8, crc);
+		put32(rest + 16 * (b - 1) + 12, (uint32_t)off);
+		memcpy(item + off, body, bl);
+		off += (bl + 15) / 16 * 16;
+		printf("ilifw: %-6s hex %06lx..%06lx -> chip %05lx, %6zu bytes, CRC %08x\n", names[b], start[b], end[b], mem[b], bl, crc);
+	}
+	for (size_t i = 16; i < len; i++)
+		h = (h ^ item[i]) * 0x01000193;
+	memcpy(item, "ILFW", 4);
+	put32(item + 4, (uint32_t)len);
+	put32(item + 8, h);
+	put32(item + 12, 3);
+	fd = open_dev(out_path, O_WRONLY | O_CREAT | O_TRUNC);
+	pwrite_all(fd, item, len, 0);
+	close(fd);
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	if (argc == 4 && !strcmp(argv[1], "verify-root"))
@@ -559,6 +691,8 @@ int main(int argc, char **argv)
 		return put(argv[2], argv[3], argv[4]);
 	if (argc == 5 && !strcmp(argv[1], "save"))
 		return save(argv[2], argv[3], argv[4]);
+	if (argc == 4 && !strcmp(argv[1], "ilifw"))
+		return ilifw(argv[2], argv[3]);
 	if (argc >= 5 && !strcmp(argv[1], "chain"))
 		return chain(argc - 2, argv + 2);
 #ifdef MAPPLE_SPLIT
@@ -568,6 +702,7 @@ int main(int argc, char **argv)
 	fprintf(stderr, "usage: mapple-install verify-root RANGES DEV\n"
 			"       mapple-install put DEV REGION|OFFSET FILE\n"
 			"       mapple-install save DEV NAME FILE\n"
+			"       mapple-install ilifw FIRMWARE OUT\n"
 			"       mapple-install chain BOOT LOADER PAYLOAD [--backup FILE] [--out FILE]\n");
 	return 2;
 }
