@@ -13,7 +13,8 @@ screen (image versions v8-v14 in NOTES.md):
                   panic the system); CommCenter jobs removed (no baseband: it
                   crash-loops and Setup blocks on its CoreTelephony XPC); bluetoothd
                   too, unless DEVICE's device.conf has `bluetooth 1`; mediaserverd's
-                  com.apple.coremedia.capturesource (no recorder server to answer it)
+                  com.apple.coremedia.capturesource (no recorder server to answer it);
+                  lskdd and wifip2pd (relaunched about once a second)
   containers      /private/var/containers/{Bundle,Data/System,Shared/SystemGroup,Temp}
                   (on iOS they live on the data volume)
   migration       LastSystemVersion so DataMigration does not run for an hour
@@ -72,7 +73,10 @@ def launchd(root, bluetooth):
             job['_PanicOnCrasX'] = job.pop('_PanicOnCrash')
             renamed += 1
     # no baseband; bluetoothd and fairplayd.H2 restart in a loop without Bluetooth and media support
-    labels = ('com.apple.CommCenter', 'com.apple.fairplayd.H2') + (() if bluetooth else ('com.apple.bluetoothd',))
+    # lskdd: its daily activity never completes, launchd starts it again at once; wifip2pd: its sandbox check of the
+    # caller fails, it exits and is asked again (no AWDL here): each about once a second
+    labels = ('com.apple.CommCenter', 'com.apple.fairplayd.H2', 'com.apple.lskdd', 'com.apple.wifip2pd') + \
+        (() if bluetooth else ('com.apple.bluetoothd',))
     removed = [k for k, j in jobs.items() if j.get('Label') in labels]
     for k in removed:
         del jobs[k]
