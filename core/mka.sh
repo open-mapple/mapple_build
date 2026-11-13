@@ -1,6 +1,6 @@
 #!/bin/bash
 # mka [target ...] [NAME=value ...], after lunch. Targets (default mapple: all of them, in this order):
-#   ipsw headers kernel shim loader adt payload bootimage userland audio gpu rootimage
+#   ipsw headers kernel shim loader adt payload installer bootimage userland audio gpu rootimage
 # NAME=value:
 #   IPSW=path          your own copy of the pinned IPSW (else it is downloaded from Apple into out/ipsw/)
 #   ANDROID_BOOT=path  a backup of your phone's boot partition: bootimage chains the loader in front of it
@@ -30,6 +30,21 @@ conf() {	# conf KEY FILE: the value of KEY (tab-indented in device.conf, at the 
 }
 need() { [ -f "$1" ] || { echo "mka: no $1 ($2)" >&2; exit 1; }; }
 say() { echo "== $*"; }
+
+# fetch NAME: the source tarball common.conf pins as NAME_url, NAME_size and NAME_sha256, in out/dl; prints its path
+fetch() {
+	local url f
+	url=$(conf "$1_url" "$COMMON_CONF")
+	f=$TOP/out/dl/$1-$(basename "$url")
+	if [ ! -f "$f" ]; then
+		mkdir -p "$(dirname "$f")"
+		curl -fsSL -o "$f.part" "$url" && mv "$f.part" "$f"
+	fi
+	[ "$(stat -f %z "$f")" = "$(conf "$1_size" "$COMMON_CONF")" ] &&
+		[ "$(shasum -a 256 "$f" | cut -d' ' -f1)" = "$(conf "$1_sha256" "$COMMON_CONF")" ] ||
+		{ echo "mka: $f does not match its pin" >&2; exit 1; }
+	echo "$f"
+}
 
 SOC=$(conf soc "$DEV/device.conf")
 # Xcode 15.4 builds the kernel (its iig) and the phone's programs (its iOS 17.5 SDK), as the runs so far were built;
@@ -167,14 +182,29 @@ step_payload() {
 		shim="$OUT/shim.Image" xnu="$OUT/xnu.bin" >/dev/null
 }
 
+# mapple-install (installer/), static for the phone's recovery and for this Mac (bootimage, dry runs), with zig from
+# the pinned zlib.
+step_installer() {
+	local I=$OBJ/installer z
+	rm -rf "$I"; mkdir -p "$I/src"
+	tar -xzf "$(fetch zlib)" -C "$I/src"
+	z=$(echo "$I"/src/zlib-*)
+	set -- "$z/adler32.c" "$z/crc32.c" "$z/deflate.c" "$z/inflate.c" "$z/inffast.c" "$z/inftrees.c" "$z/trees.c" \
+		"$z/zutil.c" "$BM/installer/mapple-install.c"
+	# splitboot's verbs (split-*), when its repository is in the tree
+	[ ! -d "$TOP/mapple/splitboot/installer" ] || set -- "$@" -DMAPPLE_SPLIT -I"$BM/installer" "$TOP"/mapple/splitboot/installer/*.c
+	command -v zig >/dev/null || { echo "mka: needs zig (brew install zig)" >&2; exit 1; }
+	zig cc -target aarch64-linux-musl -static -O2 -I"$z" "$@" -o "$OUT/mapple-install"
+	zig cc -O2 -I"$z" "$@" -o "$I/mapple-install"
+}
+
 step_bootimage() {
 	if [ -z "${ANDROID_BOOT:-}" ]; then
 		say "bootimage skipped: ANDROID_BOOT=<a backup of your phone's boot partition> makes $OUT/boot.img"
 		return
 	fi
 	need "$ANDROID_BOOT" "ANDROID_BOOT="
-	python3 "$TOP/mapple/splitboot/tools/chainboot.py" "$ANDROID_BOOT" "$OUT/mtkloader.bin" "$OUT/boot.img" "$OUT/xnup.bin" >/dev/null
-	[ "$(stat -f %z "$OUT/boot.img")" -le $(($(conf boot_size "$DEV/device.conf"))) ] || { echo "mka: boot.img too big" >&2; exit 1; }
+	"$OBJ/installer/mapple-install" chain "$ANDROID_BOOT" "$OUT/mtkloader.bin" "$OUT/xnup.bin" --out "$OUT/boot.img" >/dev/null
 }
 
 # What the root gets on top of the IPSW's files and root-tweaks.py, staged in $OUT/root (installed by rootimage):
@@ -202,18 +232,11 @@ step_audio() {
 # Mesa from its release tarball (pinned), mapple_gpu_mali's patches on it, then its own build scripts in a copy
 # of the repository (they build in place); the source is unpacked again when the patches or the Xcode change.
 step_gpu() {
-	local G=$OBJ/gpu tar url sum p stamp
-	url=$(conf mesa_url "$COMMON_CONF") sum=$(conf mesa_sha256 "$COMMON_CONF")
-	tar=$TOP/out/dl/$(basename "$url")
-	if [ ! -f "$tar" ]; then
-		mkdir -p "$(dirname "$tar")"
-		curl -fL -o "$tar.part" "$url" && mv "$tar.part" "$tar"
-	fi
-	[ "$(stat -f %z "$tar")" = "$(conf mesa_size "$COMMON_CONF")" ] &&
-		[ "$(shasum -a 256 "$tar" | cut -d' ' -f1)" = "$sum" ] || { echo "mka: $tar does not match its pin" >&2; exit 1; }
+	local G=$OBJ/gpu tar p stamp
+	tar=$(fetch mesa)
 	mkdir -p "$G"
 	(cd "$TOP/mapple/gpu/mali" && git ls-files -z -c -o --exclude-standard | rsync -a -0 --files-from=- ./ "$G/")
-	stamp=$( { echo "$sum $X15"; cat "$G"/mesa/patches/*.patch; } | shasum | cut -d' ' -f1)
+	stamp=$( { echo "$(conf mesa_sha256 "$COMMON_CONF") $X15"; cat "$G"/mesa/patches/*.patch; } | shasum | cut -d' ' -f1)
 	if [ "$(cat "$G/mesa/src.stamp" 2>/dev/null)" != "$stamp" ]; then
 		rm -rf "$G/mesa/src" "$G/mesa/build-macos" "$G/mesa/build-ios"
 		mkdir -p "$G/mesa/src"
@@ -242,8 +265,8 @@ step_rootimage() {
 
 for t in $targets; do
 	case $t in
-	mapple) set -- ipsw headers kernel shim loader adt payload bootimage userland audio gpu rootimage ;;
-	ipsw|headers|kernel|shim|loader|adt|payload|bootimage|userland|audio|gpu|rootimage) set -- "$t" ;;
+	mapple) set -- ipsw headers kernel shim loader adt payload installer bootimage userland audio gpu rootimage ;;
+	ipsw|headers|kernel|shim|loader|adt|payload|installer|bootimage|userland|audio|gpu|rootimage) set -- "$t" ;;
 	*) echo "mka: no target $t" >&2; exit 1 ;;
 	esac
 	for s in "$@"; do say "$s"; "step_$s"; done
