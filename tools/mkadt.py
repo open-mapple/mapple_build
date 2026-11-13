@@ -555,7 +555,10 @@ def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False, sp
     # --haptics (no hardware: for the audio plug-in alone), and --audio with it: /product/haptics as the iPhone X has it. MobileGestalt's DeviceSupportsClosedLoopHaptics comes from it,
     # and only then does iOS play its haptics as waveforms on the audio plug-in's "Actuator" (/dev/mapple-haptic).
     haptics = [node('haptics', [ph(), ('closed-loop', u32(1)), ('supports-3rd-party-haptics', u32(1))])] if audio or haptics else []
-    product = [node('product', [ph()] + product_props, haptics)] if product_props else []
+    # --torch: /product/camera's "flash" (any value: libMobileGestalt only asks whether it is there) makes camera-flash
+    # true, which shows the Control Center and lock-screen torch buttons.
+    camera = [node('camera', [ph(), ('flash', u32(1))])] if torch else []
+    product = [node('product', [ph()] + product_props, haptics + camera)] if product_props else []
 
     # What About shows (MobileGestalt): model-number + region-info, regulatory-model-number, /product product-name.
     # serial-number is a placeholder the shim overwrites at each boot with LK's androidboot.serialno.
