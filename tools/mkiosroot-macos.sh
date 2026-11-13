@@ -2,12 +2,14 @@
 # macOS port of tools/mkiosroot.sh: build the iOS root image for viva's
 # userdata partition straight from the IPSW, with macOS's own APFS and HFS+.
 #
-#   sudo tools/mkiosroot-macos.sh IPSW OUT.img [SIZE] [DEVICE]   (SIZE default 16g)
+#   sudo tools/mkiosroot-macos.sh IPSW OUT.img [SIZE] [DEVICE] [EXTRA]   (SIZE default 16g)
 #
 # Produces OUT.img (raw, sparse file: one case-sensitive journaled HFS+ volume,
 # no partition map) with the OS root, both cryptexes, the same links and
 # keybag as mkiosroot.sh, and tools/root-tweaks.py applied. Then
 # tools/img2simg.py turns it into an Android sparse image for fastboot.
+# EXTRA: a directory laid over the root before root-tweaks.py (owned by root,
+# modes kept); a /usr/libexec/mappled in it gets its launchd job.
 #
 # Files are copied with GNU rsync (Homebrew): it reads through macOS's APFS
 # driver, which decompresses LZBITMAP/LZFSE files, and copies no BSD flags or
@@ -15,9 +17,9 @@
 # kernel has no kexts). Owners and modes are kept (ownership enabled, root).
 set -euo pipefail
 
-[[ $# -ge 2 ]] || { sed -n '2,13p' "$0"; exit 2; }
+[[ $# -ge 2 ]] || { sed -n '2,17p' "$0"; exit 2; }
 [[ $EUID == 0 ]] || { echo "run with sudo (owners must be preserved)" >&2; exit 1; }
-ipsw=$(cd "$(dirname "$1")" && pwd)/$(basename "$1") out=$2 size=${3:-16g} device=${4:-}
+ipsw=$(cd "$(dirname "$1")" && pwd)/$(basename "$1") out=$2 size=${3:-16g} device=${4:-} extra=${5:-}
 here=$(cd "$(dirname "$0")" && pwd)
 RSYNC=/opt/homebrew/bin/rsync
 [[ -x $RSYNC ]] || { echo "need GNU rsync: brew install rsync" >&2; exit 1; }
@@ -130,7 +132,12 @@ printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
 chown 0:0 "$kb"
 chmod 0600 "$kb"
 
+[[ -z $extra ]] || "$RSYNC" -a --chown=0:0 "$extra/" "$work/root/"
 python3 "$here/root-tweaks.py" "$work/root" $device
+if [[ -x $work/root/usr/libexec/mappled ]]; then
+	p=$work/root/System/Library/xpc/launchd.plist
+	python3 "$here/../../../mapple/userland/tools/launchd-add.py" "$p" "$p" /usr/libexec/mappled
+fi
 
 # Nothing on the volume may still be HFS-compressed.
 left=$(find "$work/root" -flags +compressed -print -quit 2>/dev/null || true)

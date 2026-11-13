@@ -1,6 +1,6 @@
 #!/bin/bash
 # mka [target ...] [NAME=value ...], after lunch. Targets (default mapple: all of them, in this order):
-#   ipsw headers kernel shim loader adt payload bootimage
+#   ipsw headers kernel shim loader adt payload bootimage userland audio gpu rootimage
 # NAME=value:
 #   IPSW=path          your own copy of the pinned IPSW (else it is downloaded from Apple into out/ipsw/)
 #   ANDROID_BOOT=path  a backup of your phone's boot partition: bootimage chains the loader in front of it
@@ -32,8 +32,8 @@ need() { [ -f "$1" ] || { echo "mka: no $1 ($2)" >&2; exit 1; }; }
 say() { echo "== $*"; }
 
 SOC=$(conf soc "$DEV/device.conf")
-# Xcode 15.4 builds the kernel (its iig), as the runs so far were built; the loader and the shim use the usual
-# Xcode. xcode-select is left alone.
+# Xcode 15.4 builds the kernel (its iig) and the phone's programs (its iOS 17.5 SDK), as the runs so far were built;
+# the loader, the shim and Mesa's host tools use the usual Xcode. xcode-select is left alone.
 [ -n "${XCODE15_DEVELOPER_DIR:-}" ] || XCODE15_DEVELOPER_DIR=$(mdfind 'kMDItemCFBundleIdentifier == "com.apple.dt.Xcode" && kMDItemVersion == "15.4"' | head -1)/Contents/Developer
 X15=$XCODE15_DEVELOPER_DIR
 [ "$(DEVELOPER_DIR=$X15 xcrun --find iig 2>/dev/null)" = "$X15/Toolchains/XcodeDefault.xctoolchain/usr/bin/iig" ] ||
@@ -177,10 +177,73 @@ step_bootimage() {
 	[ "$(stat -f %z "$OUT/boot.img")" -le $(($(conf boot_size "$DEV/device.conf"))) ] || { echo "mka: boot.img too big" >&2; exit 1; }
 }
 
+# What the root gets on top of the IPSW's files and root-tweaks.py, staged in $OUT/root (installed by rootimage):
+# mappled and its tools in a userdebug build only (mapple/userland's README), the audio server's plug-in when
+# device.conf has audio 1, the Metal driver.
+step_userland() {
+	local R=$OUT/root
+	rm -rf "$R/usr/libexec/mappled" "$R/private/var/root/mapple-dev"
+	[ "$TARGET_BUILD_VARIANT" = userdebug ] || return 0
+	DEVELOPER_DIR=$X15 bash "$TOP/mapple/userland/tools/mappled/build.sh" "$OBJ/userland/mappled" >/dev/null
+	mkdir -p "$R/usr/libexec" "$R/private/var/root/mapple-dev"
+	cp "$OBJ/userland/mappled" "$R/usr/libexec/"
+	for f in vln bootrec mstat mapple-usbd; do cp "$OBJ/userland/$f" "$R/private/var/root/mapple-dev/"; done
+}
+
+step_audio() {
+	local H=$OUT/root/System/Library/Audio/Plug-Ins/HAL
+	rm -rf "$H/MappleAudio.driver"
+	[ "$(conf audio "$DEV/device.conf")" = 1 ] || return 0
+	DEVELOPER_DIR=$X15 bash "$TOP/mapple/userland/audio/build.sh" "$OBJ/audio" >/dev/null
+	mkdir -p "$H"
+	cp -R "$OBJ/audio/MappleAudio.driver" "$H/"
+}
+
+# Mesa from its release tarball (pinned), mapple_gpu_mali's patches on it, then its own build scripts in a copy
+# of the repository (they build in place); the source is unpacked again when the patches or the Xcode change.
+step_gpu() {
+	local G=$OBJ/gpu tar url sum p stamp
+	url=$(conf mesa_url "$COMMON_CONF") sum=$(conf mesa_sha256 "$COMMON_CONF")
+	tar=$TOP/out/dl/$(basename "$url")
+	if [ ! -f "$tar" ]; then
+		mkdir -p "$(dirname "$tar")"
+		curl -fL -o "$tar.part" "$url" && mv "$tar.part" "$tar"
+	fi
+	[ "$(stat -f %z "$tar")" = "$(conf mesa_size "$COMMON_CONF")" ] &&
+		[ "$(shasum -a 256 "$tar" | cut -d' ' -f1)" = "$sum" ] || { echo "mka: $tar does not match its pin" >&2; exit 1; }
+	mkdir -p "$G"
+	(cd "$TOP/mapple/gpu/mali" && git ls-files -z -c -o --exclude-standard | rsync -a -0 --files-from=- ./ "$G/")
+	stamp=$( { echo "$sum $X15"; cat "$G"/mesa/patches/*.patch; } | shasum | cut -d' ' -f1)
+	if [ "$(cat "$G/mesa/src.stamp" 2>/dev/null)" != "$stamp" ]; then
+		rm -rf "$G/mesa/src" "$G/mesa/build-macos" "$G/mesa/build-ios"
+		mkdir -p "$G/mesa/src"
+		tar -xJf "$tar" -C "$G/mesa/src" --strip-components 1
+		for p in "$G"/mesa/patches/*.patch; do git -C "$G/mesa/src" apply "$p"; done
+		echo "$stamp" > "$G/mesa/src.stamp"
+	fi
+	say "gpu: Mesa for the Mac (its compilers), then for iOS, then the driver; log in $G/build.log"
+	(cd "$G" && bash mesa/build.sh fn build_libdrm_xnu configure_macos build_macos package_macos &&
+		DEVELOPER_DIR=$X15 bash ios/build.sh mesa && DEVELOPER_DIR=$X15 bash ios/build.sh driver) > "$G/build.log" 2>&1 || { tail -20 "$G/build.log"; exit 1; }
+	rm -rf "$OUT/root/System/Library/Extensions/MappleMTLDriver.bundle"
+	mkdir -p "$OUT/root/System/Library/Extensions"
+	cp -R "$G/ios/out/MappleMTLDriver.bundle" "$OUT/root/System/Library/Extensions/"
+}
+
+# The root image needs sudo (owners kept, the image mounted): printed when system.img is missing or older than
+# anything staged, and the build stops there.
+step_rootimage() {
+	local img=$OUT/system.img
+	if [ ! -f "$img" ] || [ -n "$(find "$OUT/root" -newer "$img" -print -quit)" ]; then
+		echo "mka: the root image needs sudo. Run, then mka again:"
+		echo "  rm -f $img; sudo $BM/tools/mkiosroot-macos.sh $IPSW_FILE $img $(conf root_size "$DEV/device.conf") $TARGET_DEVICE $OUT/root"
+		exit 2
+	fi
+}
+
 for t in $targets; do
 	case $t in
-	mapple) set -- ipsw headers kernel shim loader adt payload bootimage ;;
-	ipsw|headers|kernel|shim|loader|adt|payload|bootimage) set -- "$t" ;;
+	mapple) set -- ipsw headers kernel shim loader adt payload bootimage userland audio gpu rootimage ;;
+	ipsw|headers|kernel|shim|loader|adt|payload|bootimage|userland|audio|gpu|rootimage) set -- "$t" ;;
 	*) echo "mka: no target $t" >&2; exit 1 ;;
 	esac
 	for s in "$@"; do say "$s"; "step_$s"; done

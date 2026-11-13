@@ -155,13 +155,13 @@ def audio(root, plugin):
             os.makedirs(os.path.dirname(src), exist_ok=True)
             shutil.move(os.path.join(dst_dir, 'VirtualAudio.plugin'), src)
             print('VirtualAudio.plugin enabled again')
-        top = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../..')
-        bundle = os.path.join(top, 'mapple/userland/audio/out/MappleAudio.driver')
-        if not os.path.isdir(bundle):
-            sys.exit(bundle + ' missing: mapple/userland/audio/build.sh first')
         dst = os.path.join(root, 'System/Library/Audio/Plug-Ins/HAL/MappleAudio.driver')
-        shutil.rmtree(dst, ignore_errors=True)
-        shutil.copytree(bundle, dst)
+        if not os.path.isdir(dst):   # mka puts it on the root first
+            top = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../..')
+            bundle = os.path.join(top, 'mapple/userland/audio/out/MappleAudio.driver')
+            if not os.path.isdir(bundle):
+                sys.exit(bundle + ' missing: mapple/userland/audio/build.sh first')
+            shutil.copytree(bundle, dst)
         for d, _, files in os.walk(dst):
             os.chown(d, 0, 0)
             os.chmod(d, 0o755)
