@@ -1,6 +1,6 @@
 #!/bin/bash
 # mka [target ...] [NAME=value ...], after lunch. Targets (default mapple: all of them, in this order):
-#   ipsw headers kernel shim loader adt payload installer bootimage userland audio gpu rootimage
+#   ipsw headers kernel shim loader adt payload installer bootimage userland audio gpu rootimage rootsparse zip
 # NAME=value:
 #   IPSW=path          your own copy of the pinned IPSW (else it is downloaded from Apple into out/ipsw/)
 #   ANDROID_BOOT=path  a backup of your phone's boot partition: bootimage chains the loader in front of it
@@ -263,13 +263,45 @@ step_rootimage() {
 	fi
 }
 
+# The root for fastboot: system.img's allocated blocks as a sparse image, and their ranges for the zip's check.
+step_rootsparse() {
+	need "$OUT/system.img" "mka rootimage"
+	[ "$OUT/root.img" -nt "$OUT/system.img" ] && [ -f "$OUT/root.ranges" ] && return
+	python3 "$BM/tools/rootranges.py" "$OUT/system.img" "$OUT/root.img" "$OUT/root.ranges"
+}
+
+# The recovery zip (installer/update-binary): personal, as the payload carries your IPSW's device tree and your
+# phone's touch firmware.
+step_zip() {
+	local Z=$OBJ/zip f
+	for f in mapple-install mtkloader.bin xnup.bin root.ranges; do need "$OUT/$f" "mka mapple"; done
+	rm -rf "$Z"; mkdir -p "$Z/META-INF/com/google/android"
+	cp "$BM/installer/update-binary" "$Z/META-INF/com/google/android/"
+	echo "#dummy" > "$Z/META-INF/com/google/android/updater-script"
+	cp "$OUT/mapple-install" "$OUT/mtkloader.bin" "$OUT/xnup.bin" "$OUT/root.ranges" "$Z/"
+	# a splitboot product (device.conf's split_size): the zip carves xnusys first
+	[ -z "$(conf split_size "$DEV/device.conf")" ] || conf split_size "$DEV/device.conf" > "$Z/split_size"
+	(cd "$Z" && shasum -a 256 mapple-install mtkloader.bin xnup.bin root.ranges $(ls split_size 2>/dev/null) > SHA256SUMS)
+	f=$OUT/mapple-$(conf ios_build "$COMMON_CONF")-$(date +%Y%m%d)-$TARGET_DEVICE-PERSONAL.zip
+	rm -f "$OUT"/mapple-*-"$TARGET_DEVICE"-PERSONAL.zip "$OUT"/mapple-*-"$TARGET_DEVICE"-uninstall.zip
+	(cd "$Z" && zip -q -X -r "$f" META-INF mapple-install mtkloader.bin xnup.bin root.ranges SHA256SUMS $(ls split_size 2>/dev/null))
+	if [ -f "$Z/split_size" ]; then
+		f=${f%-PERSONAL.zip}-uninstall.zip
+		echo split-uninstall > "$Z/uninstall"
+		(cd "$Z" && shasum -a 256 mapple-install uninstall > SHA256SUMS && rm -f "$f" &&
+			zip -q -X -r "$f" META-INF mapple-install uninstall SHA256SUMS)
+		say "$f"
+	fi
+	say "$f"
+}
+
 for t in $targets; do
 	case $t in
-	mapple) set -- ipsw headers kernel shim loader adt payload installer bootimage userland audio gpu rootimage ;;
-	ipsw|headers|kernel|shim|loader|adt|payload|installer|bootimage|userland|audio|gpu|rootimage) set -- "$t" ;;
+	mapple) set -- ipsw headers kernel shim loader adt payload installer bootimage userland audio gpu rootimage rootsparse zip ;;
+	ipsw|headers|kernel|shim|loader|adt|payload|installer|bootimage|userland|audio|gpu|rootimage|rootsparse|zip) set -- "$t" ;;
 	*) echo "mka: no target $t" >&2; exit 1 ;;
 	esac
 	for s in "$@"; do say "$s"; "step_$s"; done
 done
-(cd "$OUT" && ls kernel shim.Image mtkloader.bin "$TARGET_DEVICE.adt" xnu.bin xnup.bin boot.img 2>/dev/null |
+(cd "$OUT" && ls kernel shim.Image mtkloader.bin "$TARGET_DEVICE.adt" xnu.bin xnup.bin boot.img root.ranges 2>/dev/null |
 	xargs shasum -a 256 > SHA256SUMS; cat SHA256SUMS)
