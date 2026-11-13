@@ -2,7 +2,7 @@
 """Build the minimal Apple Device Tree that the MT6781 xnu needs to boot.
 
 Only what the early boot path actually reads (see NOTES.md); every MMIO
-address comes from the sweet live FDT. Usage:  mkadt.py OUT.adt [--dump] [--qemu] [--highmem] [--viva|--spaced [--ufs] [--haptics|--audio] [--torch]] [--canvas=WxH]
+address comes from the sweet live FDT. Usage:  mkadt.py OUT.adt [--dump] [--qemu] [--highmem] [--viva|--spaced [--ufs] [--haptics|--audio] [--torch] [--resize]] [--canvas=WxH]
 """
 import hashlib, os, struct, sys
 
@@ -373,7 +373,7 @@ def spaced_devices(ph, phandle, gic_ph, ecid, audio=False, torch=False):
 
 
 def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False, spaced=False, audio=False, haptics=False,
-          torch=False):
+          torch=False, resize=False):
     """qemu=True: same tree, but with QEMU virt's GIC addresses and CNTFRQ (tools/qemu-sweet.py).
     viva=True: Redmi Note 11 Pro 4G addresses. Without mapple_ufs there is no UFS node, so the
     kernel never touches storage; with it the kernel drives the MediaTek host LK left running."""
@@ -407,6 +407,9 @@ def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False, sp
         ('random-seed', seed),
         ('debug-enabled', u32(1)),
         ('embedded-panic-log-size', u32(PANIC_LOG_SIZE)),
+        # --resize (device.conf's resize): the display pipe's resizer shows the whole picture at its own aspect under a
+        # black strip; the kernel's mp_fb_rsz overrides it.
+        *((('mapple-resize', u32(1)),) if resize else ()),
         ('firmware-version', cstr('mapple-shim')),
         ('system-firmware-version', cstr('mapple-shim')),
         # iBoot's SHA-384 of the boot manifest; /sbin/mount -P 1 exits unless
@@ -592,7 +595,7 @@ if __name__ == '__main__':
             CANVAS[0], CANVAS[1] = int(w), int(h)
     root = build(qemu='--qemu' in sys.argv, highmem='--highmem' in sys.argv, viva='--viva' in sys.argv,
                  mapple_ufs='--ufs' in sys.argv, spaced='--spaced' in sys.argv, audio='--audio' in sys.argv,
-                 haptics='--haptics' in sys.argv, torch='--torch' in sys.argv)
+                 haptics='--haptics' in sys.argv, torch='--torch' in sys.argv, resize='--resize' in sys.argv)
     blob = adt.serialize(root)
     open(sys.argv[1], 'wb').write(blob)
     if '--dump' in sys.argv:
