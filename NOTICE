@@ -2,7 +2,7 @@ Open Mapple: the build system. MIT (LICENSE).
 
 - tools/ and .github/workflows/xnu.yml come from ios-viva (github.com/Nik300/ios-viva): the ADT, boot image,
   root image and USB link tools. MIT, Copyright (c) 2026 dipa-studio.
-- ios165/fetch-from-ipsw.py, tools/mkxnup.py and tools/mkidentity.py come from HakiOS
+- ios165/fetch-from-ipsw.py and tools/mkxnup.py come from HakiOS
   (github.com/oosexgang/hakios-xnu-kernel). MIT, Copyright (c) 2025-2026 the HakiOS authors.
 - fonts/terminus/ter-u16b.bdf is Terminus Font 4.49 by Dimitar Toshkov Zhekov, unmodified: SIL Open Font
   License 1.1 (fonts/terminus/OFL.TXT), Reserved Font Name "Terminus Font".
