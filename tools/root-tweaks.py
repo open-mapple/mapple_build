@@ -17,7 +17,9 @@ screen (image versions v8-v14 in NOTES.md):
                   (on iOS they live on the data volume)
   migration       LastSystemVersion so DataMigration does not run for an hour
                   on every boot
-  audio           VirtualAudio HAL plug-in disabled (mediaserverd crash)
+  audio           VirtualAudio HAL plug-in disabled (mediaserverd crash); with
+                  `audio 1` in DEVICE's device.conf it stays, and the audio
+                  plug-in (mapple/userland audio/build.sh) goes beside it
   MediaToolbox    StartRecorderServer=false (camera filter prewarm calls a
                   NULL OpenGL function without a GPU -> mediaserverd crash loop)
   SpringBoard     BKNoWatchdogs (one slow CPU path, no scene-create watchdog
@@ -113,10 +115,30 @@ def activation(root):
     print('data ark', d)
 
 
-def audio(root):
+def audio(root, plugin):
     src = os.path.join(root, 'Library/Audio/Plug-Ins/HAL/VirtualAudio.plugin')
     dst_dir = os.path.join(root, 'Library/Audio/Plug-Ins/HAL.disabled')
-    if os.path.exists(src):
+    if plugin:
+        # VirtualAudio routes iOS's sound to MappleAudio's "Speaker"; put back if an earlier run moved it
+        if os.path.exists(os.path.join(dst_dir, 'VirtualAudio.plugin')) and not os.path.exists(src):
+            os.makedirs(os.path.dirname(src), exist_ok=True)
+            shutil.move(os.path.join(dst_dir, 'VirtualAudio.plugin'), src)
+            print('VirtualAudio.plugin enabled again')
+        top = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../..')
+        bundle = os.path.join(top, 'mapple/userland/audio/out/MappleAudio.driver')
+        if not os.path.isdir(bundle):
+            sys.exit(bundle + ' missing: mapple/userland/audio/build.sh first')
+        dst = os.path.join(root, 'System/Library/Audio/Plug-Ins/HAL/MappleAudio.driver')
+        shutil.rmtree(dst, ignore_errors=True)
+        shutil.copytree(bundle, dst)
+        for d, _, files in os.walk(dst):
+            os.chown(d, 0, 0)
+            os.chmod(d, 0o755)
+            for f in files:
+                os.chown(os.path.join(d, f), 0, 0)
+                os.chmod(os.path.join(d, f), 0o755 if f == 'MappleAudio' else 0o644)
+        print('MappleAudio.driver installed')
+    elif os.path.exists(src):
         os.makedirs(dst_dir, exist_ok=True)
         shutil.move(src, dst_dir)
         print('VirtualAudio.plugin disabled')
@@ -163,7 +185,7 @@ def main():
     launchd(root, conf.get('bluetooth') == '1')
     containers(root)
     activation(root)
-    audio(root)
+    audio(root, conf.get('audio') == '1')
     merge_pref(root, 'com.apple.migration', {
         'LastSystemVersion': BUILD,
         'DMUserDataDisposition': {'SyntheticDidUpgrade': False, 'buildVersion': BUILD}})
