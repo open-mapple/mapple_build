@@ -2,7 +2,7 @@
 """Build the minimal Apple Device Tree that the MT6781 xnu needs to boot.
 
 Only what the early boot path actually reads (see NOTES.md); every MMIO
-address comes from the sweet live FDT. Usage:  mkadt.py OUT.adt [--dump] [--qemu] [--highmem] [--viva|--spaced [--ufs] [--audio]] [--canvas=WxH]
+address comes from the sweet live FDT. Usage:  mkadt.py OUT.adt [--dump] [--qemu] [--highmem] [--viva|--spaced [--ufs] [--haptics|--audio]] [--canvas=WxH]
 """
 import hashlib, os, struct, sys
 
@@ -356,7 +356,7 @@ def spaced_devices(ph, phandle, gic_ph, ecid, audio=False):
     ]
 
 
-def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False, spaced=False, audio=False):
+def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False, spaced=False, audio=False, haptics=False):
     """qemu=True: same tree, but with QEMU virt's GIC addresses and CNTFRQ (tools/qemu-sweet.py).
     viva=True: Redmi Note 11 Pro 4G addresses. Without mapple_ufs there is no UFS node, so the
     kernel never touches storage; with it the kernel drives the MediaTek host LK left running."""
@@ -535,9 +535,9 @@ def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False, sp
         product_props = [(k, cstr('sRGB') if k == 'artwork-display-gamut' else v) for k, v in product_props]
     if product_props and spaced:
         product_props = [(k, cstr('realme 8i') if k == 'product-name' else v) for k, v in product_props]
-    # --audio: /product/haptics as the iPhone X has it. MobileGestalt's DeviceSupportsClosedLoopHaptics comes from it,
+    # --haptics (no hardware: for the audio plug-in alone), and --audio with it: /product/haptics as the iPhone X has it. MobileGestalt's DeviceSupportsClosedLoopHaptics comes from it,
     # and only then does iOS play its haptics as waveforms on the audio plug-in's "Actuator" (/dev/mapple-haptic).
-    haptics = [node('haptics', [ph(), ('closed-loop', u32(1)), ('supports-3rd-party-haptics', u32(1))])] if audio else []
+    haptics = [node('haptics', [ph(), ('closed-loop', u32(1)), ('supports-3rd-party-haptics', u32(1))])] if audio or haptics else []
     product = [node('product', [ph()] + product_props, haptics)] if product_props else []
 
     # What About shows (MobileGestalt): model-number + region-info, regulatory-model-number, /product product-name.
@@ -571,7 +571,8 @@ if __name__ == '__main__':
             w, h = a.split('=', 1)[1].split('x')
             CANVAS[0], CANVAS[1] = int(w), int(h)
     root = build(qemu='--qemu' in sys.argv, highmem='--highmem' in sys.argv, viva='--viva' in sys.argv,
-                 mapple_ufs='--ufs' in sys.argv, spaced='--spaced' in sys.argv, audio='--audio' in sys.argv)
+                 mapple_ufs='--ufs' in sys.argv, spaced='--spaced' in sys.argv, audio='--audio' in sys.argv,
+                 haptics='--haptics' in sys.argv)
     blob = adt.serialize(root)
     open(sys.argv[1], 'wb').write(blob)
     if '--dump' in sys.argv:
