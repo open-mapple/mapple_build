@@ -326,11 +326,14 @@ def spaced_devices(ph, phandle, gic_ph, ecid):
             ('interrupts', spi(0x112, IRQ_LEVEL_HIGH) + spi(0x113, IRQ_LEVEL_HIGH) + spi(0x114, IRQ_LEVEL_HIGH)),
         ]),
         # CONNSYS WiFi, as viva's: MT6631WLAN.cpp matches it; launchd starts wifid only with a node named "wlan".
+        # wifi-vendor: MT6631WLAN.cpp publishes it as MobileGestalt's WifiVendor; BlueTool's built-in script for
+        # this platform is only there for "Murata" and "USI" modules (the MT6631 has none of either).
         node('wlan', [
             ph(),
             ('device_type', cstr('wlan')),
             ('compatible', cstr('mediatek,mt6781-wlan')),
             ('local-mac-address', wifi_mac(ecid)),
+            ('wifi-vendor', cstr('Murata')),
         ]),
     ]
 
