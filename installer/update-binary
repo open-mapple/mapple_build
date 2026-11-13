@@ -1,0 +1,104 @@
+#!/sbin/sh
+# The install zip's script, run by the recovery (TWRP, OrangeFox) as: update-binary VERSION OUTFD ZIP
+# The root is on its partition already (fastboot flash userdata root.img); this checks it, writes the tail area
+# (settings record cleared, the phone's firmware, log cleared), keeps the Android boot in the saved area and chains
+# the loader into boot, last (the chained image's size and SHA-256 recorded after it). Nothing is written until every
+# check passes; each write is read back.
+# A split zip (member split_size, GiB) has two passes: without xnusys it carves it off userdata's end and stops for
+# fastboot flash xnusys root.img; with it, the root is on xnusys and split-chain saves and chains boot.
+# An uninstall zip (member uninstall) gives xnusys back to userdata and the saved boot back to boot (split-uninstall).
+# Dry runs on a Mac: MAPPLE_DEVICE=spaced, MAPPLE_BLOCK=dir (files boot, userdata, xnusys), MAPPLE_DISK=file,
+# MAPPLE_FW=dir (vendor/, odm/).
+OUTFD=$2 ZIP=$3 D=/tmp/mapple DISK=
+B=${MAPPLE_BLOCK:-/dev/block/by-name}/boot U=${MAPPLE_BLOCK:-/dev/block/by-name}/userdata
+CONNSYS="soc2_2_ram_mcu_2_1_hdr.bin soc2_2_ram_wifi_2_1_hdr.bin soc2_2_ram_bt_2_1_hdr.bin
+	WIFI_RAM_CODE_soc2_2_2_1.bin WMT_SOC.cfg BT_FW.cfg"
+
+ui() { echo "ui_print $*" >&"$OUTFD"; echo ui_print >&"$OUTFD"; }
+fail() { ui "Stopped: $*"; exit 1; }
+run() {
+	"$D/mapple-install" "$@" > "$D/log" 2>&1; s=$?
+	while read -r l; do ui "$l"; done < "$D/log"
+	return $s
+}
+
+ui "Open Mapple for the realme 8i"
+dev=${MAPPLE_DEVICE:-$(getprop ro.product.device)}
+case $dev in spaced|RMX3151L1|RMX3286) ;; *) fail "this zip is for the realme 8i (spaced), not $dev" ;; esac
+case $ZIP in /data/*|/sdcard/*|/storage/emulated/*) fail "the zip is on userdata: sideload it, or use an SD card or OTG" ;; esac
+[ -b "$B" ] || [ -n "$MAPPLE_BLOCK" ] || fail "no $B"
+[ -b "$U" ] || [ -n "$MAPPLE_BLOCK" ] || fail "no $U"
+
+rm -rf "$D"; mkdir -p "$D/fw/connsys" "$D/fw/touch" || fail "no $D"
+unzip -o -q "$ZIP" -x 'META-INF/*' -d "$D" || fail "cannot unpack the zip"
+(cd "$D" && sha256sum -c SHA256SUMS >/dev/null) || fail "the zip's files do not match SHA256SUMS"
+chmod 755 "$D/mapple-install"
+
+if [ -f "$D/uninstall" ]; then
+	ui "Uninstall: xnusys goes back into userdata. This formats Android's data and iOS's."
+	DISK=${MAPPLE_DISK:-$(readlink -f "$U" | sed 's/[0-9]*$//')}
+	if [ -z "$MAPPLE_BLOCK" ]; then
+		for m in /sdcard /data /metadata; do
+			! grep -q " $m " /proc/mounts || umount "$m" || fail "$m is in use: nothing done"
+		done
+	fi
+	run split-uninstall "$DISK" "$B" || fail "not uninstalled"
+	ui "Done: reboot; Android sets its data up again"
+	exit 0
+fi
+
+R=$U
+if [ -f "$D/split_size" ]; then
+	R=${MAPPLE_BLOCK:-/dev/block/by-name}/xnusys
+	DISK=${MAPPLE_DISK:-$(readlink -f "$U" | sed 's/[0-9]*$//')}
+	if [ ! -e "$R" ]; then
+		ui "Making xnusys ($(cat "$D/split_size") GiB) off userdata's end: Android's data is erased"
+		run split-carve "$DISK" --size "$(cat "$D/split_size")" || fail "xnusys was not made; the partition table is as it was"
+		ui "Next: adb reboot bootloader; fastboot flash xnusys root.img; fastboot reboot recovery; then this zip again"
+		exit 0
+	fi
+fi
+
+ui "Checking the root on ${R##*/} (a minute)"
+run verify-root "$D/root.ranges" "$R" || fail "flash the root first: fastboot flash ${R##*/} root.img"
+
+ui "Reading the firmware from vendor and odm"
+if [ -n "$MAPPLE_FW" ]; then
+	V=$MAPPLE_FW/vendor O=$MAPPLE_FW/odm
+else
+	V=$D/vendor O=$D/odm
+	mkdir -p "$V" "$O"
+	mount -o ro /dev/block/mapper/vendor "$V" || fail "cannot mount vendor"
+	mount -o ro /dev/block/mapper/odm "$O" || fail "cannot mount odm"
+fi
+for f in $CONNSYS; do cp "$V/firmware/$f" "$D/fw/connsys/" || fail "no $f in vendor"; done
+cp "$O"/firmware/tp/*/FW_NF_ILI7807S_*.bin "$D/fw/touch/" 2>/dev/null ||
+	cp "$O"/firmware/FW_NF_ILI7807S_*.bin "$D/fw/touch/" || fail "no touch firmware in odm"
+[ -n "$MAPPLE_FW" ] || umount "$V" "$O"
+(cd "$D/fw" && tar -cf "$D/fw.tar" connsys touch) || fail "cannot pack the firmware"
+
+if [ -n "$DISK" ]; then
+	ui "Writing"
+	run put "$R" settings /dev/null || fail "settings record"
+	run put "$R" firmware "$D/fw.tar" || fail "firmware"
+	run put "$R" log /dev/null || fail "log"
+	run split-chain "$DISK" "$B" "$D/mtkloader.bin" "$D/xnup.bin" || fail "boot was not chained"
+	ui "Done: reboot into Open Mapple"
+	exit 0
+fi
+
+cat "$B" > "$D/boot.prev" || fail "cannot read boot"
+run chain "$D/boot.prev" "$D/mtkloader.bin" "$D/xnup.bin" --backup "$D/boot.orig" --out "$D/boot.new" ||
+	fail "cannot chain the loader into this boot image"
+
+ui "Writing"
+run put "$U" settings /dev/null || fail "settings record"
+run put "$U" firmware "$D/fw.tar" || fail "firmware"
+run put "$U" log /dev/null || fail "log"
+[ ! -f "$D/boot.orig" ] || run save "$U" boot "$D/boot.orig" || fail "the Android boot was not saved; boot is unchanged"
+if ! run put "$B" 0 "$D/boot.new"; then
+	run put "$B" 0 "$D/boot.prev" || fail "boot is broken and could not be put back: do not reboot; adb pull $D/boot.prev"
+	fail "boot could not be written; it is back as it was"
+fi
+run save "$U" chained "$D/boot.new" || ui "boot is chained; its record in the saved area was not written"
+ui "Done: reboot into Open Mapple"
