@@ -5,6 +5,8 @@
 #   IPSW=path          your own copy of the pinned IPSW (else it is downloaded from Apple into out/ipsw/)
 #   ANDROID_BOOT=path  a backup of your phone's boot partition: bootimage chains the loader in front of it
 #   KERNEL=path        a kernel already built (skips the kernel build)
+#   TOUCH_FW=path      the phone's FW_NF_ILI7807S_*.bin into the payload (item ilifw); the zip's products otherwise
+#                      read it from the tail area, where the zip puts it; the development layout takes fw-touch/'s
 #   XCODE15_DEVELOPER_DIR=path  Xcode 15.4's Developer directory, if Spotlight can't find it
 # Steps that need sudo print the command and stop; run it, then mka again.
 set -euo pipefail
@@ -91,19 +93,12 @@ step_ipsw() {
 	echo "$(stat -f '%z %m' "$IPSW_FILE") $IPSW_FILE" > "$stamp"
 }
 
-# The headers made from your own files, never kept in a repository: the iPhone X's device tree and the loader's
-# identity (the IPSW), the loader's font, the touch firmware (your phone, through the device's pull-firmware.sh).
+# The iPhone X's device tree, from your IPSW (never kept in a repository), and the loader's font.
 step_headers() {
-	local H=$OBJ/headers ili
+	local H=$OBJ/headers
 	mkdir -p "$H"
 	python3 "$BM/tools/extract-dt.py" "$IPSW_FILE" "$H/d22ap.adt" >/dev/null
-	python3 "$BM/tools/mkidentity.py" "$H/d22ap.adt" > "$H/identity.h"
 	python3 "$BM/tools/mkfont8x16.py" "$BM/fonts/terminus/ter-u16b.bdf" > "$H/font8x16.h"
-	if [ -f "$DEV/tools/mkilifw.py" ]; then
-		ili=$(ls "$DEV"/fw-touch/FW_NF_ILI7807S_*.bin 2>/dev/null | head -1)
-		[ -n "$ili" ] || { echo "mka: no touch firmware: MAPPLE_SERIAL=<adb serial> $DEV/pull-firmware.sh (phone in Android, rooted)" >&2; exit 1; }
-		python3 "$DEV/tools/mkilifw.py" "$ili" "$H/ilifw.h" >/dev/null
-	fi
 }
 
 # smoke-kernel.sh's build: darwin-xnu-build at its pinned commit, KDK 13.5; the tree is
@@ -168,11 +163,9 @@ step_shim() {
 
 step_loader() {
 	local L=$OBJ/loader touch=none
-	rm -rf "$L"; mkdir -p "$L/mtk/loader" "$L/xnuloader"
+	rm -rf "$L"; mkdir -p "$L/mtk/loader"
 	(cd "$TOP/mapple/loader/mtk/loader" && git ls-files -z -c -o --exclude-standard | rsync -a -0 --files-from=- ./ "$L/mtk/loader/")
-	cp "$OBJ/headers/identity.h" "$L/xnuloader/"
 	cp "$OBJ/headers/font8x16.h" "$L/mtk/loader/"
-	[ ! -f "$OBJ/headers/ilifw.h" ] || cp "$OBJ/headers/ilifw.h" "$L/mtk/loader/"
 	[ ! -f "$DEV/fw-touch/hdl_firmware.img" ] || touch=$DEV/fw-touch/hdl_firmware.img
 	printf 'CONFIG_SOC="%s"\n' "$SOC" > "$L/.config"
 	# shellcheck disable=SC2046
@@ -186,7 +179,7 @@ step_adt() {
 }
 
 step_payload() {
-	local cmdline size max kver c
+	local cmdline size max kver c fw=${TOUCH_FW:-} ili=
 	cmdline=$(merge "$(conf cmdline "$COMMON_CONF") $(conf cmdline "$DEV/device.conf")" "$(conf "${INSTALL}_cmdline" "$DEV/device.conf")")
 	python3 "$BM/tools/mkpayload.py" "$OUT/kernel" "$OUT/$TARGET_DEVICE.adt" "$P/xnu.bin" --cmdline "$cmdline" >/dev/null
 	echo "$cmdline" > "$P/cmdline"
@@ -195,8 +188,21 @@ step_payload() {
 	c=$TOP/kernel/mediatek/common
 	kver=mapple-$SOC-g$(git -C "$c" rev-parse --short=8 HEAD)
 	[ -z "$(git -C "$c" status --porcelain --untracked-files=no)" ] || kver=$kver-dirty
+	# the touch firmware (your phone's): TOUCH_FW=, or fw-touch/ for the development layout, which has no tail area;
+	# packed before xnu, as the loader unpacks the shim's ramdisk over what follows it
+	if [ -z "$fw" ] && [ "$INSTALL" = dev ]; then
+		case " $(conf loader "$DEV/device.conf") " in *" -DXNU_TOUCH_ILI=1 "*)
+			fw=$(ls "$DEV"/fw-touch/FW_NF_ILI7807S_*.bin 2>/dev/null | head -1)
+			[ -n "$fw" ] || { echo "mka: no touch firmware: MAPPLE_SERIAL=<adb serial> $DEV/pull-firmware.sh (phone in Android, rooted)" >&2; exit 1; } ;;
+		esac
+	fi
+	rm -f "$P/ilifw.bin"
+	if [ -n "$fw" ]; then
+		python3 "$TOP/mapple/loader/mtk/tools/mkilifw.py" "$fw" "$P/ilifw.bin" >/dev/null
+		ili=ilifw=$P/ilifw.bin
+	fi
 	python3 "$BM/tools/mkxnup.py" -o "$P/xnup.bin" --kernel-version "$kver" \
-		shim="$OUT/shim.Image" xnu="$P/xnu.bin" >/dev/null
+		shim="$OUT/shim.Image" ${ili:+"$ili"} xnu="$P/xnu.bin" >/dev/null
 }
 
 # mapple-install (installer/), static for the phone's recovery and for this Mac (bootimage, dry runs), with zig from
