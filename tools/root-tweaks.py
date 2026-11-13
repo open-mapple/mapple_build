@@ -13,7 +13,8 @@ screen (image versions v8-v14 in NOTES.md):
                   panic the system); CommCenter jobs removed (no baseband: it
                   crash-loops and Setup blocks on its CoreTelephony XPC); bluetoothd
                   too, unless DEVICE's device.conf has `bluetooth 1`; mediaserverd's
-                  com.apple.coremedia.capturesource (no recorder server to answer it);
+                  capture services (torch, capture source and session, viewfinder,
+                  deferred container) to mapple-captured if the root has it;
                   lskdd and wifip2pd (relaunched about once a second)
   containers      /private/var/containers/{Bundle,Data/System,Shared/SystemGroup,Temp}
                   (on iOS they live on the data volume)
@@ -62,6 +63,13 @@ def merge_pref(root, name, values):
     print('pref', name, sorted(values))
 
 
+CAPTURED = '/usr/libexec/mapple-captured'
+VIEWFINDER = 'com.apple.coremedia.cameraviewfinder'    # NSXPC, not ours to answer: left with nobody
+CAPTURE_SERVICES = ('com.apple.coremedia.flashlight', 'com.apple.coremedia.capturesource',
+                    'com.apple.coremedia.capturesession', VIEWFINDER,
+                    'com.apple.coremedia.capture.deferred.containermanager.xpc')
+
+
 def launchd(root, bluetooth):
     path = os.path.join(root, 'System/Library/xpc/launchd.plist')
     st = os.stat(path)
@@ -80,13 +88,26 @@ def launchd(root, bluetooth):
     removed = [k for k, j in jobs.items() if j.get('Label') in labels]
     for k in removed:
         del jobs[k]
-    # the recorder server is off (MediaToolbox below): its capture source would never answer, and SpringBoard waits on
-    # it with no timeout when the mic indicator comes on; without the name a client's lookup fails at once
+    # The recorder server is off (MediaToolbox below), so mediaserverd never answers its capture services, and a client
+    # (SpringBoard's torch and mic indicator) waits on them with no timeout. They go to our stand-in
+    # (mapple/userland tools/mapple-captured: the torch, no cameras) when the root has it; without it a lookup fails.
     for job in jobs.values():
         if job.get('Label') == 'com.apple.mediaserverd':
-            job.get('MachServices', {}).pop('com.apple.coremedia.capturesource', None)
+            for name in CAPTURE_SERVICES:
+                job.get('MachServices', {}).pop(name, None)
+    standin = os.path.exists(os.path.join(root, CAPTURED.lstrip('/')))
+    if standin:
+        jobs['/System/Library/LaunchDaemons/org.openmapple.mapple-captured.plist'] = {
+            'Label': 'org.openmapple.mapple-captured',
+            'Program': CAPTURED,
+            'ProgramArguments': [CAPTURED],
+            'MachServices': {name: True for name in CAPTURE_SERVICES if name != VIEWFINDER},
+            'UserName': 'root',
+            'StandardErrorPath': '/dev/console',
+        }
     save(path, plist, st.st_uid, st.st_gid, st.st_mode & 0o7777)
-    print(f'launchd.plist: {renamed} _PanicOnCrash renamed, {len(removed)} jobs removed')
+    print(f'launchd.plist: {renamed} _PanicOnCrash renamed, {len(removed)} jobs removed, capture services to '
+          f'{"mapple-captured" if standin else "nobody"}')
 
 
 def containers(root):
