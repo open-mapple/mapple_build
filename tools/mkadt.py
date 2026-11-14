@@ -340,6 +340,22 @@ def spaced_devices(ph, phandle, gic_ph, ecid, audio=False, torch=False, camera=F
         # --camera: libMobileGestalt's rear-facing-camera and still-camera are /arm-io/isp's camera-rear (any value);
         # the camera itself is mapple-captured's.
         node('isp', [ph(), ('camera-rear', u32(1))]),
+    ] + [
+        # and the camera's buses (bsd/dev/mtk_cam.c, by bus number): I2C2 for its LDO chip (0x29), I2C4 for the rear
+        # sensor, its VCM and EEPROM; the live DT's i2c2 SPI 107 and i2c4 SPI 109, gate bits 2 and 4, clock-div 5.
+        node(f'i2c{n}', [
+            ph(),
+            ('compatible', cstr('mediatek,mt6781-i2c')),
+            ('reg', io(base, 0x1000) + io(0x11017000, 0x1000)),
+            ('interrupt-parent', u32(gic_ph)),
+            ('interrupts', spi(irq, IRQ_LEVEL_HIGH)),
+            ('bus-id', u32(n)),
+            ('imp-cg-bit', u32(n)),
+            ('clock-frequency', u32(400000)),
+            ('source-clock', u32(124800000)),
+            ('clock-div', u32(5)),
+            ('ext-time-config', u32(0x1801)),
+        ]) for n, base, irq in ((2, 0x11009000, 107), (4, 0x11011000, 109))
     ] if camera else []) + [
         # ILI7807S touch (iokit/Kernel/arm/hid/ILI7807S.cpp): SPI4's pins by hand, a report per low pulse on
         # EINT 12; firmware sent by mtkloader before the shim (mp_ili_fw= for sending it again).
