@@ -16,8 +16,10 @@ CONNSYS="soc2_2_ram_mcu_2_1_hdr.bin soc2_2_ram_wifi_2_1_hdr.bin soc2_2_ram_bt_2_
 
 ui() { echo "ui_print $*" >&"$OUTFD"; echo ui_print >&"$OUTFD"; }
 fail() { ui "Stopped: $*"; exit 1; }
-# TWRP decrypts and mounts /data (and /metadata) by itself: off before anything writes userdata or metadata, and
-# nothing mounted may be userdata or a device-mapper device on it (TWRP's /data is dm-N over userdata)
+# Before anything writes userdata or metadata. Without an Android lock TWRP decrypts and mounts /data (dm-N over
+# userdata) and /metadata itself; with one it asks for the passcode, which may be cancelled, and /data stays
+# encrypted and unmounted. Either way: what is mounted comes off, and nothing mounted may be userdata or a
+# device-mapper device on it. Nothing here reads /data.
 unmount_data() {
 	[ -z "$MAPPLE_BLOCK" ] || return 0
 	for m in /sdcard /data /metadata; do
