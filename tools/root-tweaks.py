@@ -14,8 +14,12 @@ screen (image versions v8-v14 in NOTES.md):
                   crash-loops and Setup blocks on its CoreTelephony XPC); bluetoothd
                   too, unless DEVICE's device.conf has `bluetooth 1`; mediaserverd's
                   capture services (torch, capture source and session, viewfinder,
-                  deferred container) to mapple-captured if the root has it;
-                  lskdd and wifip2pd (relaunched about once a second)
+                  deferred container) to mapple-captured if the root has it, with
+                  a 200 MB jetsam limit (jetsamproperties: its preview buffers and
+                  photos), and AVFoundation logging the API violations it would
+                  throw for (Camera.app asks the iPhone X's photo features; the
+                  reason shows in the log); lskdd and wifip2pd (relaunched about
+                  once a second)
   containers      /private/var/containers/{Bundle,Data/System,Shared/SystemGroup,Temp}
                   (on iOS they live on the data volume)
   migration       LastSystemVersion so DataMigration does not run for an hour
@@ -108,6 +112,17 @@ def launchd(root, bluetooth):
     save(path, plist, st.st_uid, st.st_gid, st.st_mode & 0o7777)
     print(f'launchd.plist: {renamed} _PanicOnCrash renamed, {len(removed)} jobs removed, capture services to '
           f'{"mapple-captured" if standin else "nobody"}')
+    # launchd's per-model jetsam table; without an entry a daemon gets a few MB
+    tables = glob.glob(os.path.join(root, 'System/Library/LaunchDaemons/com.apple.jetsamproperties.*.plist'))
+    for path in tables if standin else ():
+        st = os.stat(path)
+        data = load(path)
+        data['Version4']['Daemon']['Override']['org.openmapple.mapple-captured'] = {
+            'JetsamPriority': 140, 'ActiveSoftMemoryLimit': 200, 'InactiveHardMemoryLimit': 200}
+        save(path, data, st.st_uid, st.st_gid, st.st_mode & 0o7777)
+        print('jetsam: mapple-captured 200 MB in', os.path.basename(path))
+    if standin:
+        merge_pref(root, 'com.apple.avfoundation', {'avcapture_pardon_api_violations': 1})
 
 
 def containers(root):
