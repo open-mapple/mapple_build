@@ -19,8 +19,9 @@
  *
  * DEV is the partition that holds the root (userdata in single boot). It ends in two areas of 64 MiB:
  *   end - 128 MiB  saved: a 4 KiB header, then a slot per item (boot at +1 MiB)
- *   end -  64 MiB  tail: settings record 1 MiB, firmware 15 MiB (ustar), log up to the last 4 KiB
- * The last 4 KiB are XNU's: HFS+ writes its alternate volume header 1 KiB before the partition's end as well.
+ *   end -  64 MiB  tail: settings 1 MiB, firmware 15 MiB (ustar), log 47 MiB
+ *   end -   1 MiB  not ours: the boot-args record (shim/bootrec.h, its first 4 KiB block), which the kernel writes,
+ *                  and XNU's: HFS+ writes an alternate volume header 1 KiB before the partition's end as well
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -47,7 +48,7 @@ struct region { const char *name; uint64_t from_end, size; };
 static const struct region tail[] = {
 	{ "settings", 64 * MiB, 1 * MiB },
 	{ "firmware", 63 * MiB, 15 * MiB },
-	{ "log", 48 * MiB, 48 * MiB - 4096 },
+	{ "log", 48 * MiB, 47 * MiB },
 };
 
 static const struct region slots[] = {	/* size 0: a record, no slot */
