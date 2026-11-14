@@ -248,15 +248,17 @@ step_userland() {
 }
 
 # The Mapple app (mapple/manager) in /Applications, both variants; rootimage copies it as root, so its helper is
-# set-user-ID root there.
+# set-user-ID root there. Its tweak loader in /usr/lib/mapple, which the kernel uses only with mp_inject=1.
 step_manager() {
 	local R=$OUT/root
-	rm -rf "$R/Applications/Mapple.app"
+	rm -rf "$R/Applications/Mapple.app" "$R/usr/lib/mapple"
 	[ -d "$TOP/mapple/manager" ] || { say "manager skipped: no mapple/manager in the tree"; return; }
 	DEVELOPER_DIR=$X15 bash "$TOP/mapple/manager/build.sh" "$OBJ/manager" >/dev/null
 	mkdir -p "$R/Applications"
 	cp -R "$OBJ/manager/Mapple.app" "$R/Applications/"
 	chmod 4755 "$R/Applications/Mapple.app/mapplehelper"
+	mkdir -p "$R/usr/lib/mapple"
+	cp "$OBJ/manager/tweakloader.dylib" "$R/usr/lib/mapple/"
 }
 
 step_audio() {
