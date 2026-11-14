@@ -16,11 +16,17 @@ CONNSYS="soc2_2_ram_mcu_2_1_hdr.bin soc2_2_ram_wifi_2_1_hdr.bin soc2_2_ram_bt_2_
 
 ui() { echo "ui_print $*" >&"$OUTFD"; echo ui_print >&"$OUTFD"; }
 fail() { ui "Stopped: $*"; exit 1; }
-# TWRP decrypts and mounts /data (and /metadata) by itself: off before anything writes userdata or metadata
+# TWRP decrypts and mounts /data (and /metadata) by itself: off before anything writes userdata or metadata, and
+# nothing mounted may be userdata or a device-mapper device on it (TWRP's /data is dm-N over userdata)
 unmount_data() {
 	[ -z "$MAPPLE_BLOCK" ] || return 0
 	for m in /sdcard /data /metadata; do
 		! grep -q " $m " /proc/mounts || umount "$m" || fail "$m is in use: nothing done"
+	done
+	p=$(basename "$(readlink -f "$U")")
+	for d in $(awk '{print $1}' /proc/mounts); do
+		b=$(basename "$(readlink -f "$d")")
+		[ "$b" != "$p" ] && [ ! -e "/sys/block/$b/slaves/$p" ] || fail "userdata is still mounted ($d): nothing done"
 	done
 }
 run() {
@@ -63,6 +69,7 @@ if [ -f "$D/split_size" ]; then
 	fi
 fi
 
+[ -n "$DISK" ] || unmount_data
 ui "Checking the root on ${R##*/} (a minute)"
 run verify-root "$D/root.ranges" "$R" || fail "flash the root first: fastboot flash ${R##*/} root.img"
 
