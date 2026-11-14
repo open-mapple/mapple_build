@@ -1,6 +1,6 @@
 #!/bin/bash
 # mka [target ...] [NAME=value ...], after lunch. Targets (default mapple: all of them, in this order):
-#   ipsw headers kernel shim loader adt payload installer bootimage userland audio gpu rootimage rootsparse zip
+#   ipsw headers kernel shim loader adt payload installer bootimage userland manager audio gpu rootimage rootsparse zip
 # NAME=value:
 #   IPSW=path          your own copy of the pinned IPSW (else it is downloaded from Apple into out/ipsw/)
 #   ANDROID_BOOT=path  a backup of your phone's boot partition: bootimage chains the loader in front of it
@@ -247,6 +247,18 @@ step_userland() {
 	for f in vln bootrec mstat mapple-usbd; do cp "$OBJ/userland/$f" "$R/private/var/root/mapple-dev/"; done
 }
 
+# The Mapple app (mapple/manager) in /Applications, both variants; rootimage copies it as root, so its helper is
+# set-user-ID root there.
+step_manager() {
+	local R=$OUT/root
+	rm -rf "$R/Applications/Mapple.app"
+	[ -d "$TOP/mapple/manager" ] || { say "manager skipped: no mapple/manager in the tree"; return; }
+	DEVELOPER_DIR=$X15 bash "$TOP/mapple/manager/build.sh" "$OBJ/manager" >/dev/null
+	mkdir -p "$R/Applications"
+	cp -R "$OBJ/manager/Mapple.app" "$R/Applications/"
+	chmod 4755 "$R/Applications/Mapple.app/mapplehelper"
+}
+
 step_audio() {
 	local H=$OUT/root/System/Library/Audio/Plug-Ins/HAL
 	rm -rf "$H/MappleAudio.driver"
@@ -333,8 +345,8 @@ sys.exit(open(sys.argv[2]).read().split("\n")[2] != "blocks %d" % struct.unpack(
 
 for t in $targets; do
 	case $t in
-	mapple) set -- ipsw headers kernel shim loader adt payload installer bootimage userland audio gpu rootimage rootsparse zip ;;
-	ipsw|headers|kernel|shim|loader|adt|payload|installer|bootimage|userland|audio|gpu|rootimage|rootsparse|zip) set -- "$t" ;;
+	mapple) set -- ipsw headers kernel shim loader adt payload installer bootimage userland manager audio gpu rootimage rootsparse zip ;;
+	ipsw|headers|kernel|shim|loader|adt|payload|installer|bootimage|userland|manager|audio|gpu|rootimage|rootsparse|zip) set -- "$t" ;;
 	*) echo "mka: no target $t" >&2; exit 1 ;;
 	esac
 	for s in "$@"; do say "$s"; "step_$s"; done
