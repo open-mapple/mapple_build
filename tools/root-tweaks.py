@@ -18,8 +18,8 @@ screen (image versions v8-v14 in NOTES.md):
                   a 200 MB jetsam limit (jetsamproperties: its preview buffers and
                   photos), and AVFoundation logging the API violations it would
                   throw for (Camera.app asks the iPhone X's photo features; the
-                  reason shows in the log); lskdd and wifip2pd (relaunched about
-                  once a second)
+                  reason shows in the log), Camera's Formats set to Most Compatible;
+                  lskdd and wifip2pd (relaunched about once a second)
   containers      /private/var/containers/{Bundle,Data/System,Shared/SystemGroup,Temp}
                   (on iOS they live on the data volume)
   migration       LastSystemVersion so DataMigration does not run for an hour
@@ -123,6 +123,8 @@ def launchd(root, bluetooth):
         print('jetsam: mapple-captured 200 MB in', os.path.basename(path))
     if standin:
         merge_pref(root, 'com.apple.avfoundation', {'avcapture_pardon_api_violations': 1})
+        # Camera's Formats: Most Compatible (JPEG); High Efficiency asks HEIC, which nothing here encodes
+        merge_pref(root, 'com.apple.camera', {'CAMUserPreferenceCaptureEncodingBehavior': 1})
 
 
 def containers(root):
