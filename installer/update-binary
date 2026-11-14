@@ -16,6 +16,13 @@ CONNSYS="soc2_2_ram_mcu_2_1_hdr.bin soc2_2_ram_wifi_2_1_hdr.bin soc2_2_ram_bt_2_
 
 ui() { echo "ui_print $*" >&"$OUTFD"; echo ui_print >&"$OUTFD"; }
 fail() { ui "Stopped: $*"; exit 1; }
+# TWRP decrypts and mounts /data (and /metadata) by itself: off before anything writes userdata or metadata
+unmount_data() {
+	[ -z "$MAPPLE_BLOCK" ] || return 0
+	for m in /sdcard /data /metadata; do
+		! grep -q " $m " /proc/mounts || umount "$m" || fail "$m is in use: nothing done"
+	done
+}
 run() {
 	"$D/mapple-install" "$@" > "$D/log" 2>&1; s=$?
 	while read -r l; do ui "$l"; done < "$D/log"
@@ -37,11 +44,7 @@ chmod 755 "$D/mapple-install"
 if [ -f "$D/uninstall" ]; then
 	ui "Uninstall: xnusys goes back into userdata. This formats Android's data and iOS's."
 	DISK=${MAPPLE_DISK:-$(readlink -f "$U" | sed 's/[0-9]*$//')}
-	if [ -z "$MAPPLE_BLOCK" ]; then
-		for m in /sdcard /data /metadata; do
-			! grep -q " $m " /proc/mounts || umount "$m" || fail "$m is in use: nothing done"
-		done
-	fi
+	unmount_data
 	run split-uninstall "$DISK" "$B" || fail "not uninstalled"
 	ui "Done: reboot; Android sets its data up again"
 	exit 0
@@ -53,6 +56,7 @@ if [ -f "$D/split_size" ]; then
 	DISK=${MAPPLE_DISK:-$(readlink -f "$U" | sed 's/[0-9]*$//')}
 	if [ ! -e "$R" ]; then
 		ui "Making xnusys ($(cat "$D/split_size") GiB) off userdata's end: Android's data is erased"
+		unmount_data
 		run split-carve "$DISK" --size "$(cat "$D/split_size")" || fail "xnusys was not made; the partition table is as it was"
 		ui "Next: adb reboot bootloader; fastboot flash xnusys root.img; fastboot reboot recovery; then this zip again"
 		exit 0
