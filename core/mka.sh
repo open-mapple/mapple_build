@@ -163,8 +163,9 @@ step_shim() {
 
 step_loader() {
 	local L=$OBJ/loader touch=none
-	rm -rf "$L"; mkdir -p "$L/mtk/loader"
+	rm -rf "$L"; mkdir -p "$L/mtk/loader" "$L/shim"
 	(cd "$TOP/mapple/loader/mtk/loader" && git ls-files -z -c -o --exclude-standard | rsync -a -0 --files-from=- ./ "$L/mtk/loader/")
+	cp "$TOP/mapple/loader/shim/bootrec.h" "$L/shim/"	# the boot menu reads the boot-args record too
 	cp "$OBJ/headers/font8x16.h" "$L/mtk/loader/"
 	[ ! -f "$DEV/fw-touch/hdl_firmware.img" ] || touch=$DEV/fw-touch/hdl_firmware.img
 	printf 'CONFIG_SOC="%s"\n' "$SOC" > "$L/.config"
