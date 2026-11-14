@@ -302,6 +302,10 @@ step_zip() {
 	local Z=$OBJ/zip f
 	[ "$INSTALL" != dev ] || { echo "mka: the development layout has no zip: lunch mapple_${TARGET_DEVICE}_single (or _split)" >&2; exit 1; }
 	for f in "$OUT/mapple-install" "$P/mtkloader.bin" "$P/xnup.bin" "$OUT/root.ranges"; do need "$f" "mka mapple"; done
+	# root.ranges must describe system.img (the zip checks the phone's root against it)
+	python3 -c 'import struct, sys; f = open(sys.argv[1], "rb"); f.seek(1024); h = f.read(512)
+sys.exit(open(sys.argv[2]).read().split("\n")[2] != "blocks %d" % struct.unpack(">I", h[44:48]))' "$OUT/system.img" "$OUT/root.ranges" ||
+		{ echo "mka: root.ranges is not system.img's: mka rootsparse" >&2; exit 1; }
 	rm -rf "$Z"; mkdir -p "$Z/META-INF/com/google/android"
 	cp "$BM/installer/update-binary" "$Z/META-INF/com/google/android/"
 	echo "#dummy" > "$Z/META-INF/com/google/android/updater-script"
