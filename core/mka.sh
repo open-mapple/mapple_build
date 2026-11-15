@@ -231,7 +231,8 @@ step_installer() {
 	# splitboot's verbs (split-*), when its repository is in the tree
 	[ ! -d "$TOP/mapple/splitboot/installer" ] || set -- "$@" -DMAPPLE_SPLIT -I"$BM/installer" "$TOP"/mapple/splitboot/installer/*.c
 	command -v zig >/dev/null || { echo "mka: needs zig (brew install zig)" >&2; exit 1; }
-	zig cc -target aarch64-linux-musl -static -O2 -I"$z" "$@" -o "$OUT/mapple-install"
+	# the phone's copy ships in the zip: stripped, and no path of this Mac in it
+	zig cc -target aarch64-linux-musl -static -O2 -s -ffile-prefix-map="$TOP"=/openmapple -I"$z" "$@" -o "$OUT/mapple-install"
 	zig cc -O2 -I"$z" "$@" -o "$I/mapple-install"
 }
 
