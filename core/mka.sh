@@ -113,7 +113,7 @@ step_kernel() {
 		return
 	fi
 	kc=DEVELOPMENT; [ "$TARGET_BUILD_VARIANT" = user ] && kc=RELEASE
-	stamp=$( { echo "$kc"; for t in common "$SOC"; do (cd "$TOP/kernel/mediatek/$t" &&
+	stamp=$( { echo "$kc builder=openmapple prefix=/openmapple"; for t in common "$SOC"; do (cd "$TOP/kernel/mediatek/$t" &&
 		git ls-files -z -c -o --exclude-standard | xargs -0 shasum); done; } | shasum | cut -d' ' -f1)
 	[ -f "$OUT/kernel" ] && [ "$(cat "$K/stamp" 2>/dev/null)" = "$stamp" ] && { say "kernel: sources unchanged"; return; }
 	(
@@ -136,6 +136,13 @@ step_kernel() {
 	rm -rf "$D/xnu"; mkdir -p "$D/xnu"
 	(cd "$TOP/kernel/mediatek/common" && git ls-files -z -c -o --exclude-standard | rsync -a -0 --files-from=- ./ "$D/xnu/")
 	(cd "$TOP/kernel/mediatek/$SOC" && git ls-files -z -c -o --exclude-standard iokit osfmk | rsync -a -0 --files-from=- ./ "$D/xnu/")
+	# Nothing of this Mac in the kernel: a neutral builder in the version string iOS shows (newvers.pl asks whoami),
+	# and the build directory mapped away from the __FILE__ strings of asserts and panics. Objects built with other
+	# flags are thrown away first.
+	sed -i '' 's/^my \$BUILDER=`whoami`;/my $BUILDER="openmapple";/' "$D/xnu/config/newvers.pl"
+	grep -q '^my \$BUILDER="openmapple";' "$D/xnu/config/newvers.pl"
+	export RC_NONARCH_CFLAGS="-ffile-prefix-map=$D=/openmapple"
+	[ "$(cat "$K/flags" 2>/dev/null)" = "$RC_NONARCH_CFLAGS" ] || { rm -rf "$D/build"; echo "$RC_NONARCH_CFLAGS" > "$K/flags"; }
 	# the SDK's target macros beside the staged libpthread and HFS (kernel builds use -nostdinc)
 	for d in bsd/pthread/libpthread_staged bsd/hfs_staged; do
 		cp "$(xcrun --sdk macosx --show-sdk-path)/usr/include/TargetConditionals.h" "$D/xnu/$d/"
