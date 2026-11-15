@@ -302,6 +302,9 @@ step_gpu() {
 	rm -rf "$OUT/root/System/Library/Extensions/MappleMTLDriver.bundle"
 	mkdir -p "$OUT/root/System/Library/Extensions"
 	cp -R "$G/ios/out/MappleMTLDriver.bundle" "$OUT/root/System/Library/Extensions/"
+	# its debug map names this Mac's object files: stripped of debug symbols, then signed again as ios/build.sh signs it
+	xcrun strip -S "$OUT/root/System/Library/Extensions/MappleMTLDriver.bundle/MappleMTLDriver" 2>/dev/null
+	codesign -s - -f "$OUT/root/System/Library/Extensions/MappleMTLDriver.bundle" 2>/dev/null
 }
 
 # The root image needs sudo (owners kept, the image mounted): printed when system.img is missing or older than
