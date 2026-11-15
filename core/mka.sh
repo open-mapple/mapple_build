@@ -46,6 +46,8 @@ merge() {
 	done
 	echo $out
 }
+# a user build's loader and shim boot quietly ("Booting Open Mapple", then the logo); userdebug's print as before
+release_flags() { [ "$TARGET_BUILD_VARIANT" != user ] || echo -DMAPPLE_RELEASE=1; }
 need() { [ -f "$1" ] || { echo "mka: no $1 ($2)" >&2; exit 1; }; }
 say() { echo "== $*"; }
 
@@ -164,7 +166,8 @@ step_shim() {
 	local S=$OBJ/shim
 	rm -rf "$S"; mkdir -p "$S"
 	(cd "$TOP/mapple/loader/shim" && git ls-files -z -c -o --exclude-standard | rsync -a -0 --files-from=- ./ "$S/")
-	(cd "$S" && CHECK_ABS=$BM/tools/check-abs.py ./build-"$TARGET_DEVICE".sh >/dev/null)
+	# shellcheck disable=SC2046
+	(cd "$S" && CHECK_ABS=$BM/tools/check-abs.py ./build-"$TARGET_DEVICE".sh $(release_flags) >/dev/null)
 	cp "$S/out/$TARGET_DEVICE/Image" "$OUT/shim.Image"
 }
 
@@ -177,7 +180,7 @@ step_loader() {
 	[ ! -f "$DEV/fw-touch/hdl_firmware.img" ] || touch=$DEV/fw-touch/hdl_firmware.img
 	printf 'CONFIG_SOC="%s"\n' "$SOC" > "$L/.config"
 	# shellcheck disable=SC2046
-	(cd "$L/mtk/loader" && TOUCH_IMG=$touch LLD=${LLD:-ld.lld} ./build.sh $(conf loader "$DEV/device.conf") $(conf "${INSTALL}_loader" "$DEV/device.conf") >/dev/null)
+	(cd "$L/mtk/loader" && TOUCH_IMG=$touch LLD=${LLD:-ld.lld} ./build.sh $(conf loader "$DEV/device.conf") $(conf "${INSTALL}_loader" "$DEV/device.conf") $(release_flags) >/dev/null)
 	cp "$L/mtk/loader/mtkloader.bin" "$P/"
 }
 
