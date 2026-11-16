@@ -416,7 +416,7 @@ def build(seed=None, qemu=False, highmem=False, viva=False, mapple_ufs=False, sp
     fb_h = FB_H
     if spaced:
         fb, fb_size, fb_stride, ecid, fb_h = SPACED_FB, SPACED_FB_SIZE, SPACED_FB_STRIDE, SPACED_ECID, SPACED_FB_H
-    seed = seed if seed is not None else os.urandom(64)
+    seed = seed if seed is not None else bytes(64)    # the loader writes a fresh one at every boot
     phandle = iter(range(1, 1000))
     ph = lambda: ('AAPL,phandle', u32(next(phandle)))
 
