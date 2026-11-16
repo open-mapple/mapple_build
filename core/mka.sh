@@ -263,7 +263,13 @@ step_userland() {
 step_manager() {
 	local R=$OUT/root
 	rm -rf "$R/Applications/Mapple.app" "$R/usr/lib/mapple"
-	[ -d "$TOP/mapple/manager" ] || { say "manager skipped: no mapple/manager in the tree"; return; }
+	if [ ! -d "$TOP/mapple/manager" ]; then	# mapple_manager is private: the released app, pinned in common.conf
+		[ -n "$(conf mapple_app_url "$COMMON_CONF")" ] || { echo "mka: no mapple/manager and no mapple_app pin" >&2; exit 1; }
+		tar -C "$R" -xf "$(fetch mapple_app)" ./Applications/Mapple.app ./usr/lib/mapple/tweakloader.dylib
+		chmod 4755 "$R/Applications/Mapple.app/mapplehelper"
+		say "manager: Mapple.app from the release ($(basename "$(dirname "$(conf mapple_app_url "$COMMON_CONF")")"), mapple_manager is private)"
+		return
+	fi
 	DEVELOPER_DIR=$X15 bash "$TOP/mapple/manager/build.sh" "$OBJ/manager" >/dev/null
 	mkdir -p "$R/Applications"
 	cp -R "$OBJ/manager/Mapple.app" "$R/Applications/"
