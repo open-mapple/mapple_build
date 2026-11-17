@@ -11,6 +11,8 @@
  *   mapple-install save DEV NAME FILE
  *	FILE kept in DEV's saved area under NAME (boot), its header updated; read back and hashed. NAME chained
  *	records only FILE's size and SHA-256 (the boot image as we chained it)
+ *   mapple-install saved DEV NAME
+ *	exit 0 if DEV's saved area has a sound header naming NAME (chained: a pass 2 completed), 1 if not
  *   mapple-install ilifw FIRMWARE OUT
  *	the touch firmware (FW_NF_ILI7807S_*.bin, from the phone's odm) as mtkloader's item ilifw
  *   mapple-install chain BOOT LOADER PAYLOAD [--backup FILE] [--out FILE]
@@ -367,6 +369,28 @@ void saved_put(int fd, uint64_t end, const char *name, const uint8_t *d, size_t 
 	write_back(fd, "save header", head, sizeof(head), base);
 }
 
+/* whether DEV's saved area names an item: its header's magic, version, count and SHA-256 sound, and NAME in it */
+static int saved_has(const char *dev, const char *name)
+{
+	int fd = open_dev(dev, O_RDONLY);
+	uint8_t head[4096], digest[32];
+	uint32_t count, i;
+
+	pread_all(fd, head, sizeof(head), size_of(fd) - AREAS);
+	close(fd);
+	sha256(head, 4064, digest);
+	count = le32(head + 20);
+	if (memcmp(head, "mapple-saved\0\0\0\0", 16) || le32(head + 16) != 1 || count > SAVED_MAX ||
+	    memcmp(head + 4064, digest, 32))
+		return 1;
+	for (i = 0; i < count; i++)
+		if (!strncmp((char *)head + 64 + 64 * i, name, 16)) {
+			printf("saved: %s's saved area has %s\n", dev, name);
+			return 0;
+		}
+	return 1;
+}
+
 /* put and save on a partition (or a file standing for one): its end is its size */
 static int put(const char *dev, const char *where, const char *file)
 {
@@ -700,6 +724,8 @@ int main(int argc, char **argv)
 		return put(argv[2], argv[3], argv[4]);
 	if (argc == 5 && !strcmp(argv[1], "save"))
 		return save(argv[2], argv[3], argv[4]);
+	if (argc == 4 && !strcmp(argv[1], "saved"))
+		return saved_has(argv[2], argv[3]);
 	if (argc == 4 && !strcmp(argv[1], "ilifw"))
 		return ilifw(argv[2], argv[3]);
 	if (argc >= 5 && !strcmp(argv[1], "chain"))

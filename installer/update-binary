@@ -76,9 +76,11 @@ fi
 ui "Checking the root on ${R##*/} (a minute)"
 again=
 if ! "$D/mapple-install" verify-root "$D/root.ranges" "$R" > "$D/log" 2>&1; then
-	# a split zip run again (after an Android update): iOS has run on the root, its blocks are its own; the headers
-	# still say it is there. Its settings and log stay, boot is chained again.
-	[ -n "$DISK" ] && run verify-root --headers "$D/root.ranges" "$R" || {
+	# a split zip run again (after an Android update): a pass 2 completed before (the saved area has "chained") and
+	# iOS has run on the root since, so its blocks are its own; the headers still say it is there. Its settings and
+	# log stay, boot is chained again. A first pass 2 has no "chained" (pass 1 clears the saved area): full check.
+	[ -n "$DISK" ] && "$D/mapple-install" saved "$R" chained >/dev/null 2>&1 &&
+		run verify-root --headers "$D/root.ranges" "$R" || {
 		while read -r l; do ui "$l"; done < "$D/log"
 		fail "flash the root first: fastboot flash ${R##*/} root.img"
 	}
