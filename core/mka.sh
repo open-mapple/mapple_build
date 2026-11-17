@@ -265,7 +265,7 @@ step_manager() {
 	rm -rf "$R/Applications/Mapple.app" "$R/usr/lib/mapple"
 	if [ ! -d "$TOP/mapple/manager" ]; then	# mapple_manager is private: the released app, pinned in common.conf
 		[ -n "$(conf mapple_app_url "$COMMON_CONF")" ] || { echo "mka: no mapple/manager and no mapple_app pin" >&2; exit 1; }
-		tar -C "$R" -xf "$(fetch mapple_app)" ./Applications/Mapple.app ./usr/lib/mapple/tweakloader.dylib
+		tar -C "$R" -xf "$(fetch mapple_app)" ./Applications/Mapple.app ./usr/lib/mapple
 		chmod 4755 "$R/Applications/Mapple.app/mapplehelper"
 		say "manager: Mapple.app from the release ($(basename "$(dirname "$(conf mapple_app_url "$COMMON_CONF")")"), mapple_manager is private)"
 		return
@@ -276,6 +276,8 @@ step_manager() {
 	chmod 4755 "$R/Applications/Mapple.app/mapplehelper"
 	mkdir -p "$R/usr/lib/mapple"
 	cp "$OBJ/manager/tweakloader.dylib" "$R/usr/lib/mapple/"
+	cp "$OBJ/manager/fpdvolume.dylib" "$R/usr/lib/mapple/"	# fileproviderd's volume fix, the one library injected
+	chmod 755 "$R/usr/lib/mapple/fpdvolume.dylib"
 }
 
 step_audio() {
