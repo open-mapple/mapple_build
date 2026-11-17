@@ -2,8 +2,9 @@
  * mapple-install: what the install zip runs in the recovery (static aarch64 Linux), and what mka uses on the Mac for
  * the same boot image.
  *
- *   mapple-install verify-root RANGES DEV
- *	DEV holds the root RANGES describes (rootranges.py): both volume headers, then every allocated block's SHA-256
+ *   mapple-install verify-root [--headers] RANGES DEV
+ *	DEV holds the root RANGES describes (rootranges.py): both volume headers, then every allocated block's SHA-256;
+ *	with --headers the headers alone (a root iOS has run on: its blocks are its own now)
  *   mapple-install put DEV REGION|OFFSET FILE
  *	FILE written into a region of DEV's tail (settings, firmware, log; zero-filled to its end) or at a byte offset;
  *	read back and hashed
@@ -254,7 +255,7 @@ static void volume_headers(int fd, const char *dev, const struct ranges *r)
 		die("%s: the volume's alternate header is not this volume's: the flash did not finish", dev);
 }
 
-int verify_root(const char *ranges_path, const char *dev)
+int verify_root(const char *ranges_path, const char *dev, int headers_only)
 {
 	static struct ranges r;
 	static uint8_t buf[4 * MiB];
@@ -269,6 +270,11 @@ int verify_root(const char *ranges_path, const char *dev)
 		die("%s: %llu bytes, the root and its areas need %llu", dev, (unsigned long long)size_of(fd),
 		    (unsigned long long)(r.blocks * r.block_size + AREAS));
 	volume_headers(fd, dev, &r);
+	if (headers_only) {
+		close(fd);
+		printf("verify-root: %s holds a root with both volume headers\n", dev);
+		return 0;
+	}
 	sha256_init(&h);
 	for (int k = 0; k < r.n; k++)
 		for (uint64_t p = r.start[k] * r.block_size, e = r.end[k] * r.block_size; p < e;) {
@@ -687,7 +693,9 @@ static int ilifw(const char *in, const char *out_path)
 int main(int argc, char **argv)
 {
 	if (argc == 4 && !strcmp(argv[1], "verify-root"))
-		return verify_root(argv[2], argv[3]);
+		return verify_root(argv[2], argv[3], 0);
+	if (argc == 5 && !strcmp(argv[1], "verify-root") && !strcmp(argv[2], "--headers"))
+		return verify_root(argv[3], argv[4], 1);
 	if (argc == 5 && !strcmp(argv[1], "put"))
 		return put(argv[2], argv[3], argv[4]);
 	if (argc == 5 && !strcmp(argv[1], "save"))

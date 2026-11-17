@@ -25,7 +25,7 @@ void write_back(int fd, const char *what, const uint8_t *buf, size_t n, uint64_t
 void tail_put(int fd, uint64_t end, const char *region, const uint8_t *d, size_t n);
 void saved_put(int fd, uint64_t end, const char *name, const uint8_t *d, size_t n);
 
-int verify_root(const char *ranges_path, const char *dev);
+int verify_root(const char *ranges_path, const char *dev, int headers_only);
 int chain(int argc, char **argv);
 
 #ifdef MAPPLE_SPLIT
