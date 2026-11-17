@@ -15,7 +15,14 @@ B=${MAPPLE_BLOCK:-/dev/block/by-name}/boot U=${MAPPLE_BLOCK:-/dev/block/by-name}
 CONNSYS="soc2_2_ram_mcu_2_1_hdr.bin soc2_2_ram_wifi_2_1_hdr.bin soc2_2_ram_bt_2_1_hdr.bin
 	WIFI_RAM_CODE_soc2_2_2_1.bin WMT_SOC.cfg BT_FW.cfg"
 
-ui() { echo "ui_print $*" >&"$OUTFD"; echo ui_print >&"$OUTFD"; }
+# TWRP's shell takes one-digit descriptors only in >&N (it passes OUTFD=30): through /proc where there is one
+ui() {
+	if [ -e "/proc/self/fd/$OUTFD" ]; then
+		echo "ui_print $*" > "/proc/self/fd/$OUTFD"; echo ui_print > "/proc/self/fd/$OUTFD"
+	else
+		echo "ui_print $*" >&"$OUTFD"; echo ui_print >&"$OUTFD"
+	fi
+}
 fail() { ui "Stopped: $*"; exit 1; }
 # Before anything writes userdata or metadata. Without an Android lock TWRP decrypts and mounts /data (dm-N over
 # userdata) and /metadata itself; with one it asks for the passcode, which may be cancelled, and /data stays
