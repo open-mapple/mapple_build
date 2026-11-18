@@ -9,7 +9,7 @@
 # after iOS has run (an Android update replaced boot), the root's headers suffice and its settings and log stay.
 # An uninstall zip (member uninstall) gives xnusys back to userdata and the saved boot back to boot (split-uninstall).
 # Dry runs on a Mac: MAPPLE_DEVICE=spaced, MAPPLE_BLOCK=dir (files boot, userdata, xnusys), MAPPLE_DISK=file,
-# MAPPLE_FW=dir (vendor/, odm/), MAPPLE_TP=file (for /proc/devinfo/tp).
+# MAPPLE_FW=dir (vendor/, odm/), MAPPLE_TP=file (for /proc/devinfo/tp), MAPPLE_NVDATA=dir (nvdata's files).
 OUTFD=$2 ZIP=$3 D=/tmp/mapple DISK=
 B=${MAPPLE_BLOCK:-/dev/block/by-name}/boot U=${MAPPLE_BLOCK:-/dev/block/by-name}/userdata
 CONNSYS="soc2_2_ram_mcu_2_1_hdr.bin soc2_2_ram_wifi_2_1_hdr.bin soc2_2_ram_bt_2_1_hdr.bin
@@ -128,6 +128,19 @@ fi
 cp "$t" "$D/fw/touch/" || fail "cannot copy $t"
 run ilifw "$t" "$D/fw/touch/ilifw.bin" || fail "the touch firmware does not convert"
 [ -n "$MAPPLE_FW" ] || [ -z "$mounted" ] || umount $mounted
+# the phone's Wi-Fi NVRAM (it holds the MAC): nvdata's WIFI, nvdata mounted read only; never printed
+N=$D/nvdata nv=
+if [ -n "$MAPPLE_NVDATA" ]; then
+	nv=$MAPPLE_NVDATA/APCFG/APRDEB/WIFI
+elif mkdir -p "$N" && mount -t ext4 -o ro,noload /dev/block/by-name/nvdata "$N" 2>/dev/null; then
+	nv=$N/APCFG/APRDEB/WIFI
+fi
+if [ -n "$nv" ] && [ -f "$nv" ] && cp "$nv" "$D/fw/connsys/WIFI"; then
+	chmod 600 "$D/fw/connsys/WIFI"
+else
+	ui "No Wi-Fi NVRAM in nvdata: Wi-Fi will need it"
+fi
+[ -n "$MAPPLE_NVDATA" ] || ! grep -q " $N " /proc/mounts || umount "$N"
 (cd "$D/fw" && tar -cf "$D/fw.tar" connsys touch) || fail "cannot pack the firmware"
 
 if [ -n "$DISK" ]; then
