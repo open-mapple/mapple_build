@@ -101,10 +101,14 @@ ui "Reading the firmware from vendor and odm"
 if [ -n "$MAPPLE_FW" ]; then
 	V=$MAPPLE_FW/vendor O=$MAPPLE_FW/odm
 else
-	V=$D/vendor O=$D/odm
-	mkdir -p "$V" "$O"
-	mount -o ro /dev/block/mapper/vendor "$V" || fail "cannot mount vendor"
-	mount -o ro /dev/block/mapper/odm "$O" || fail "cannot mount odm"
+	# through TWRP's fstab, which knows they are EROFS (a mount of the device by itself tries f2fs and exfat);
+	# what TWRP has mounted already stays mounted
+	V=/vendor O=/odm mounted=
+	for m in /vendor /odm; do
+		grep -q " $m " /proc/mounts && continue
+		mount "$m" || fail "cannot mount $m"
+		mounted="$mounted $m"
+	done
 fi
 for f in $CONNSYS; do cp "$V/firmware/$f" "$D/fw/connsys/" || fail "no $f in vendor"; done
 # the panel's own file, as /proc/devinfo/tp names it ("fw_path: tp/21684/FW_NF_ILI7807S_BOE.bin"); without it, the
@@ -123,7 +127,7 @@ fi
 [ -f "$t" ] || fail "no touch firmware in odm"
 cp "$t" "$D/fw/touch/" || fail "cannot copy $t"
 run ilifw "$t" "$D/fw/touch/ilifw.bin" || fail "the touch firmware does not convert"
-[ -n "$MAPPLE_FW" ] || umount "$V" "$O"
+[ -n "$MAPPLE_FW" ] || [ -z "$mounted" ] || umount $mounted
 (cd "$D/fw" && tar -cf "$D/fw.tar" connsys touch) || fail "cannot pack the firmware"
 
 if [ -n "$DISK" ]; then
