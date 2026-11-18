@@ -22,8 +22,11 @@ screen (image versions v8-v14 in NOTES.md):
                   lskdd and wifip2pd (relaunched about once a second)
   containers      /private/var/containers/{Bundle,Data/System,Shared/SystemGroup,Temp}
                   (on iOS they live on the data volume)
-  migration       LastSystemVersion so DataMigration does not run for an hour
-                  on every boot
+  migration       DataMigration runs once at the first boot with only
+                  SystemAppMigrator (the 32 apps staged in /private/var
+                  installed; the other migrators in DataClassMigrators.disabled:
+                  all of them take an hour and broke SpringBoard); no
+                  LastSystemVersion, which datamigrator then records itself
   audio           VirtualAudio HAL plug-in disabled (mediaserverd crash); with
                   `audio 1` in DEVICE's device.conf it stays, and the audio
                   plug-in (mapple/userland audio/build.sh) goes beside it
@@ -198,6 +201,27 @@ def audio(root, plugin):
         print('StartRecorderServer off', os.path.relpath(conf, root))
 
 
+def migration(root):
+    merge_pref(root, 'com.apple.migration', {
+        'DMUserDataDisposition': {'SyntheticDidUpgrade': False, 'buildVersion': BUILD}})
+    path = os.path.join(root, 'private/var/mobile/Library/Preferences/com.apple.migration.plist')
+    data = load(path)
+    if data.pop('LastSystemVersion', None) is not None:
+        save(path, data, MOBILE, MOBILE, 0o600)
+    src = os.path.join(root, 'System/Library/DataClassMigrators')
+    dst = src + '.disabled'
+    moved = [m for m in sorted(os.listdir(src)) if m != 'SystemAppMigrator.migrator']
+    if moved:
+        if not os.path.isdir(dst):
+            st = os.stat(src)
+            os.mkdir(dst)
+            os.chown(dst, st.st_uid, st.st_gid)
+            os.chmod(dst, st.st_mode & 0o7777)
+        for m in moved:
+            shutil.move(os.path.join(src, m), os.path.join(dst, m))
+    print(f'migration: SystemAppMigrator alone, {len(moved)} migrators to DataClassMigrators.disabled')
+
+
 def device_conf(name):
     """The settings of `device NAME` in device/*/NAME/device.conf of this checkout."""
     top = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../..')
@@ -234,9 +258,7 @@ def main():
     containers(root)
     activation(root)
     audio(root, conf.get('audio') == '1')
-    merge_pref(root, 'com.apple.migration', {
-        'LastSystemVersion': BUILD,
-        'DMUserDataDisposition': {'SyntheticDidUpgrade': False, 'buildVersion': BUILD}})
+    migration(root)
     merge_pref(root, 'com.apple.springboard', {
         'BKNoWatchdogs': True,
         'FBLaunchWatchdogExceptions': {'com.apple.purplebuddy': 100.0},
