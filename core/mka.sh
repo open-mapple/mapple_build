@@ -250,10 +250,12 @@ step_bootimage() {
 # device.conf has audio 1, the Metal driver.
 step_userland() {
 	local R=$OUT/root
-	rm -rf "$R/usr/libexec/mappled" "$R/private/var/root/mapple-dev"
-	[ "$TARGET_BUILD_VARIANT" = userdebug ] || return 0
+	rm -rf "$R/usr/libexec/mappled" "$R/usr/libexec/mapple-captured" "$R/private/var/root/mapple-dev"
 	DEVELOPER_DIR=$X15 bash "$TOP/mapple/userland/tools/mappled/build.sh" "$OBJ/userland/mappled" >/dev/null
-	mkdir -p "$R/usr/libexec" "$R/private/var/root/mapple-dev"
+	mkdir -p "$R/usr/libexec"
+	install -m 755 "$OBJ/userland/mapple-captured" "$R/usr/libexec/"	# the torch and camera, both variants
+	[ "$TARGET_BUILD_VARIANT" = userdebug ] || return 0
+	mkdir -p "$R/private/var/root/mapple-dev"
 	cp "$OBJ/userland/mappled" "$R/usr/libexec/"
 	for f in vln bootrec mstat mapple-usbd; do cp "$OBJ/userland/$f" "$R/private/var/root/mapple-dev/"; done
 }
