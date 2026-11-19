@@ -160,8 +160,13 @@ step_kernel() {
 	grep -q '^my \$BUILDER="openmapple";' "$D/xnu/config/newvers.pl"
 	export RC_NONARCH_CFLAGS="-ffile-prefix-map=$D=/openmapple"
 	[ "$(cat "$K/flags" 2>/dev/null)" = "$RC_NONARCH_CFLAGS" ] || { rm -rf "$D/build"; echo "$RC_NONARCH_CFLAGS" > "$K/flags"; }
-	# the SDK's target macros beside the staged libpthread and HFS (kernel builds use -nostdinc)
-	for d in bsd/pthread/libpthread_staged bsd/hfs_staged; do
+	# the SDK's target macros beside the staged libpthread and HFS (kernel builds use -nostdinc); the Qualcomm tree keeps
+	# ios-sweet's names for them
+	case $SOC_VENDOR in
+	mediatek) set -- bsd/pthread/libpthread_staged bsd/hfs_staged ;;
+	qcom) set -- bsd/pthread/sweet_libpthread bsd/sweet_hfs ;;
+	esac
+	for d in "$@"; do
 		cp "$(xcrun --sdk macosx --show-sdk-path)/usr/include/TargetConditionals.h" "$D/xnu/$d/"
 	done
 	kl=$(echo "$kc" | tr A-Z a-z)
