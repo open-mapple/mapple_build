@@ -66,7 +66,22 @@ fetch() {
 	echo "$f"
 }
 
-SOC=$(conf soc "$DEV/device.conf")
+# req KEY: device.conf's KEY, which must be there and not empty
+req() {
+	local v
+	v=$(conf "$1" "$DEV/device.conf")
+	[ -n "$v" ] || { echo "mka: $DEV/device.conf: $1 is missing or empty" >&2; exit 1; }
+	echo "$v"
+}
+# soc_vendor (mediatek, qcom) picks kernel/<vendor>/; machine is the kernel's MACHINE_CONFIG; boot is how the phone's
+# boot loader starts ours: lk-chain (MediaTek's LK runs mtkloader, chained in front of Android's kernel) or abl
+# (Qualcomm's ABL starts an Android boot image from fastboot).
+SOC=$(req soc)
+SOC_VENDOR=$(req soc_vendor)
+MACHINE=$(req machine)
+BOOT=$(req boot)
+case $SOC_VENDOR/$BOOT in mediatek/lk-chain|qcom/abl) ;; *) echo "mka: device.conf: soc_vendor $SOC_VENDOR with boot $BOOT" >&2; exit 1 ;; esac
+KTOP=$TOP/kernel/$SOC_VENDOR
 # Xcode 15.4 builds the kernel (its iig) and the phone's programs (its iOS 17.5 SDK), as the runs so far were built;
 # the loader, the shim and Mesa's host tools use the usual Xcode. xcode-select is left alone.
 [ -n "${XCODE15_DEVELOPER_DIR:-}" ] || XCODE15_DEVELOPER_DIR=$(mdfind 'kMDItemCFBundleIdentifier == "com.apple.dt.Xcode" && kMDItemVersion == "15.4"' | head -1)/Contents/Developer
@@ -104,7 +119,7 @@ step_headers() {
 }
 
 # smoke-kernel.sh's build: darwin-xnu-build at its pinned commit, KDK 13.5; the tree is
-# kernel/mediatek/common with the SoC's iokit/ and osfmk/ laid over it. Built again only when the sources change.
+# kernel/<vendor>/common with the SoC's iokit/ and osfmk/ laid over it. Built again only when the sources change.
 step_kernel() {
 	local K=$OBJ/kernel D kc stamp k
 	mkdir -p "$K"
@@ -115,7 +130,7 @@ step_kernel() {
 		return
 	fi
 	kc=DEVELOPMENT; [ "$TARGET_BUILD_VARIANT" = user ] && kc=RELEASE
-	stamp=$( { echo "$kc builder=openmapple prefix=/openmapple"; for t in common "$SOC"; do (cd "$TOP/kernel/mediatek/$t" &&
+	stamp=$( { echo "$kc builder=openmapple prefix=/openmapple"; for t in common "$SOC"; do (cd "$KTOP/$t" &&
 		git ls-files -z -c -o --exclude-standard | xargs -0 shasum); done; } | shasum | cut -d' ' -f1)
 	[ -f "$OUT/kernel" ] && [ "$(cat "$K/stamp" 2>/dev/null)" = "$stamp" ] && { say "kernel: sources unchanged"; return; }
 	(
@@ -136,8 +151,8 @@ step_kernel() {
 	for t in gum xcodes; do printf '#!/bin/sh\nexit 0\n' > "$K/bin/$t"; chmod +x "$K/bin/$t"; done
 	export PATH="$K/bin:$PATH"
 	rm -rf "$D/xnu"; mkdir -p "$D/xnu"
-	(cd "$TOP/kernel/mediatek/common" && git ls-files -z -c -o --exclude-standard | rsync -a -0 --files-from=- ./ "$D/xnu/")
-	(cd "$TOP/kernel/mediatek/$SOC" && git ls-files -z -c -o --exclude-standard iokit osfmk | rsync -a -0 --files-from=- ./ "$D/xnu/")
+	(cd "$KTOP/common" && git ls-files -z -c -o --exclude-standard | rsync -a -0 --files-from=- ./ "$D/xnu/")
+	(cd "$KTOP/$SOC" && git ls-files -z -c -o --exclude-standard iokit osfmk | rsync -a -0 --files-from=- ./ "$D/xnu/")
 	# Nothing of this Mac in the kernel: a neutral builder in the version string iOS shows (newvers.pl asks whoami),
 	# and the build directory mapped away from the __FILE__ strings of asserts and panics. Objects built with other
 	# flags are thrown away first.
@@ -152,7 +167,7 @@ step_kernel() {
 	kl=$(echo "$kc" | tr A-Z a-z)
 	rm -f "$D"/build/xnu.obj/kernel.$kl.*     # build.sh skips the kernel when one is there
 	say "kernel ($kc), log in $K/build.log"
-	(cd "$D" && MACOS_VERSION=13.5 KERNEL_CONFIG=$kc MACHINE_CONFIG=$(echo "$SOC" | tr a-z A-Z) ARCH_CONFIG=ARM64 \
+	(cd "$D" && MACOS_VERSION=13.5 KERNEL_CONFIG=$kc MACHINE_CONFIG=$MACHINE ARCH_CONFIG=ARM64 \
 		bash build.sh > "$K/build.log" 2>&1) || { grep -E 'error:' "$K/build.log" | head; exit 1; }
 	k=$(ls "$D"/build/xnu.obj/kernel.$kl.* 2>/dev/null | grep -v -E '\.(dSYM|unstripped)$' | head -1)
 	[ -n "$k" ] || { echo "mka: no kernel built: see $K/build.log" >&2; exit 1; }
@@ -199,7 +214,7 @@ step_payload() {
 	echo "$cmdline" > "$P/cmdline"
 	size=$(stat -f %z "$P/xnu.bin") max=$(conf payload_max "$DEV/device.conf")
 	[ "$size" -lt $((max)) ] || { echo "mka: xnu.bin: $size bytes, over $max" >&2; exit 1; }
-	c=$TOP/kernel/mediatek/common
+	c=$KTOP/common
 	kver=mapple-$SOC-g$(git -C "$c" rev-parse --short=8 HEAD)
 	[ -z "$(git -C "$c" status --porcelain --untracked-files=no)" ] || kver=$kver-dirty
 	# the touch firmware (your phone's): TOUCH_FW=, or fw-touch/ for the development layout, which has no tail area;
