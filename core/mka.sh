@@ -186,9 +186,14 @@ step_shim() {
 	local S=$OBJ/shim
 	rm -rf "$S"; mkdir -p "$S"
 	(cd "$TOP/mapple/loader/shim" && git ls-files -z -c -o --exclude-standard | rsync -a -0 --files-from=- ./ "$S/")
+	case $SOC_VENDOR in
 	# shellcheck disable=SC2046
-	(cd "$S" && CHECK_ABS=$BM/tools/check-abs.py ./build-"$TARGET_DEVICE".sh $(release_flags) >/dev/null)
-	cp "$S/out/$TARGET_DEVICE/Image" "$OUT/shim.Image"
+	mediatek) (cd "$S" && CHECK_ABS=$BM/tools/check-abs.py ./build-"$TARGET_DEVICE".sh $(release_flags) >/dev/null)
+		cp "$S/out/$TARGET_DEVICE/Image" "$OUT/shim.Image" ;;
+	# shellcheck disable=SC2046
+	qcom) (cd "$S/qcom" && CHECK_ABS=$BM/tools/check-abs.py bash build.sh "$TARGET_DEVICE" $(release_flags) >/dev/null)
+		cp "$S/qcom/out/$TARGET_DEVICE/Image" "$OUT/shim.Image" ;;
+	esac
 }
 
 step_loader() {
