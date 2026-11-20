@@ -76,6 +76,17 @@ req() {
 # soc_vendor (mediatek, qcom) picks kernel/<vendor>/; machine is the kernel's MACHINE_CONFIG; boot is how the phone's
 # boot loader starts ours: lk-chain (MediaTek's LK runs mtkloader, chained in front of Android's kernel) or abl
 # (Qualcomm's ABL starts an Android boot image from fastboot).
+# tool NAME: AOSP's NAME.py as common.conf pins it (googlesource's base64 text), decoded into obj/
+tool() {
+	local f
+	f=$OBJ/tools/$1-$(conf "$1_sha256" "$COMMON_CONF").py
+	if [ ! -f "$f" ]; then
+		mkdir -p "$OBJ/tools"
+		base64 -d -i "$(fetch "$1")" > "$f.part" && mv "$f.part" "$f"
+	fi
+	echo "$f"
+}
+
 SOC=$(req soc)
 SOC_VENDOR=$(req soc_vendor)
 MACHINE=$(req machine)
@@ -265,7 +276,59 @@ step_installer() {
 	zig cc -O2 -I"$z" "$@" -o "$I/mapple-install"
 }
 
+# The Qualcomm boot image, for fastboot boot: the shim as its kernel (LZ4 when ABL wants it), the payload as its ramdisk,
+# the phone's own DTB from STOCK_BOOT=, the header from device.conf's bootimg_* keys, and with bootimg_avb_size the
+# unsigned AVB hash footer at the end of a partition that size, as the stock image has.
+bootimage_abl() {
+	local d k p
+	if [ -z "${STOCK_BOOT:-}" ]; then
+		say "bootimage skipped: STOCK_BOOT=<a backup of your phone's boot partition> makes $P/boot-xnu.img"
+		return
+	fi
+	need "$STOCK_BOOT" "STOCK_BOOT="
+	for k in bootimg_version bootimg_pagesize bootimg_base bootimg_kernel_offset bootimg_ramdisk_offset bootimg_tags_offset \
+		bootimg_dtb_offset bootimg_os_version bootimg_os_patch_level bootimg_kernel bootimg_cmdline; do
+		req "$k" >/dev/null
+	done
+	# the stock DTB is the phone's: read into a temporary directory, never into the build tree
+	d=$(mktemp -d)
+	trap 'rm -rf "$d"' EXIT
+	python3 "$BM/tools/unpack_bootv2.py" "$STOCK_BOOT" "$d" >/dev/null
+	[ "$(sed -n 's/^header_version: //p' "$d/header.txt")" = "$(conf bootimg_version "$DEV/device.conf")" ] &&
+		[ "$(sed -n 's/^page_size: //p' "$d/header.txt")" = "$(conf bootimg_pagesize "$DEV/device.conf")" ] ||
+		{ echo "mka: $STOCK_BOOT's header version or page size is not device.conf's bootimg_*" >&2; exit 1; }
+	[ -s "$d/dtb" ] || { echo "mka: no DTB in $STOCK_BOOT" >&2; exit 1; }
+	k=$OUT/shim.Image
+	case $(conf bootimg_kernel "$DEV/device.conf") in
+	raw) ;;
+	lz4) command -v lz4 >/dev/null || { echo "mka: needs lz4 (brew install lz4)" >&2; exit 1; }
+		lz4 -f -q -9 "$k" "$d/Image.lz4"
+		k=$d/Image.lz4 ;;
+	*) echo "mka: device.conf: bootimg_kernel is raw or lz4" >&2; exit 1 ;;
+	esac
+	python3 "$(tool mkbootimg)" --header_version "$(conf bootimg_version "$DEV/device.conf")" --kernel "$k" \
+		--ramdisk "$P/xnu.bin" --dtb "$d/dtb" --base "$(conf bootimg_base "$DEV/device.conf")" \
+		--kernel_offset "$(conf bootimg_kernel_offset "$DEV/device.conf")" \
+		--ramdisk_offset "$(conf bootimg_ramdisk_offset "$DEV/device.conf")" \
+		--tags_offset "$(conf bootimg_tags_offset "$DEV/device.conf")" --dtb_offset "$(conf bootimg_dtb_offset "$DEV/device.conf")" \
+		--pagesize "$(conf bootimg_pagesize "$DEV/device.conf")" --os_version "$(conf bootimg_os_version "$DEV/device.conf")" \
+		--os_patch_level "$(conf bootimg_os_patch_level "$DEV/device.conf")" --cmdline "$(conf bootimg_cmdline "$DEV/device.conf")" \
+		-o "$P/boot-xnu.img"
+	if [ -n "$(conf bootimg_avb_size "$DEV/device.conf")" ]; then
+		set --
+		for p in $(req bootimg_avb_props); do set -- "$@" --prop "$p"; done
+		# a fixed salt (avbtool's own is random): the same image from the same inputs
+		python3 "$(tool avbtool)" add_hash_footer --image "$P/boot-xnu.img" --partition_name boot \
+			--partition_size "$(conf bootimg_avb_size "$DEV/device.conf")" --algorithm NONE \
+			--salt 0000000000000000000000000000000000000000000000000000000000000000 "$@"
+	fi
+	rm -rf "$d"
+	trap - EXIT
+	say "$P/boot-xnu.img: fastboot boot it (nothing is flashed)"
+}
+
 step_bootimage() {
+	[ "$BOOT" != abl ] || { bootimage_abl; return; }
 	if [ -z "${ANDROID_BOOT:-}" ]; then
 		say "bootimage skipped: ANDROID_BOOT=<a backup of your phone's boot partition> makes $P/boot.img"
 		return
@@ -408,4 +471,4 @@ for t in $targets; do
 done
 r=${P#"$OUT"}; r=${r#/}${r:+/}
 (cd "$OUT" && for f in kernel shim.Image "$TARGET_DEVICE.adt" root.ranges "${r}mtkloader.bin" "${r}xnu.bin" \
-	"${r}xnup.bin" "${r}boot.img"; do [ ! -f "$f" ] || shasum -a 256 "$f"; done > "${r}SHA256SUMS"; cat "${r}SHA256SUMS")
+	"${r}xnup.bin" "${r}boot.img" "${r}boot-xnu.img"; do [ ! -f "$f" ] || shasum -a 256 "$f"; done > "${r}SHA256SUMS"; cat "${r}SHA256SUMS")
