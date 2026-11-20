@@ -4,6 +4,8 @@ Open Mapple: the build system. MIT (LICENSE), except mapple-install with SplitBo
   MIT, Copyright (c) 2026 dipa-studio.
 - tools/soc/sm7150.py: the SM7150 values of ios-sweet's tools/mkadt.py (github.com/dipa-studio/ios-sweet).
   MIT, Copyright (c) 2026 dipa-studio.
+- tools/root-tweaks-gpu-none.py: ios-sweet-pixel's tools/sunfish/sunfish-root-tweaks.py
+  (github.com/hellagarage/ios-sweet-pixel), unmodified. MIT, Copyright (c) 2026 dipa-studio.
 - ios165/fetch-from-ipsw.py and tools/mkxnup.py come from HakiOS
   (github.com/oosexgang/hakios-xnu-kernel). MIT, Copyright (c) 2025-2026 the HakiOS authors.
 - fonts/terminus/ter-u16b.bdf is Terminus Font 4.49 by Dimitar Toshkov Zhekov, unmodified: SIL Open Font

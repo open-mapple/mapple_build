@@ -42,8 +42,12 @@ screen (image versions v8-v14 in NOTES.md):
   light UI        with DEVICE and `light_ui 1` in its device.conf: Reduce Motion,
                   Reduce Transparency and Prefer Cross-Fade Transitions on for
                   the mobile user
+  no GPU          with DEVICE and `gpu none` (no Metal driver; `gpu mali` has one):
+                  ios-sweet-pixel's workarounds, root-tweaks-gpu-none.py (CoreUI
+                  on the CPU, ExtensionKit's cache signing off, the poster lock
+                  screen off, the static wallpaper without Metal)
 """
-import glob, os, plistlib, shutil, sys
+import glob, os, plistlib, shutil, subprocess, sys
 
 BUILD, VERSION = '20H392', '16.7.16'
 MOBILE = 501
@@ -275,6 +279,12 @@ def main():
         'LockdownActivationIndicatesCloudConfigurationAvailable': False})
     if conf.get('light_ui') == '1':
         light_ui(root)
+    if conf:
+        if conf.get('gpu') not in ('mali', 'none'):
+            sys.exit(f'device.conf of {sys.argv[2]}: gpu is missing or not mali or none')
+        if conf['gpu'] == 'none':
+            subprocess.run([sys.executable, '-I', os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                               'root-tweaks-gpu-none.py'), root], check=True)
 
 
 if __name__ == '__main__':
