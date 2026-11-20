@@ -1,9 +1,11 @@
 #!/bin/bash
-# mka [target ...] [NAME=value ...], after lunch. Targets (default mapple: all of them, in this order):
+# mka [target ...] [NAME=value ...], after lunch. Targets (default mapple: all of them, in this order; a Qualcomm device
+# has no loader, installer, gpu or zip):
 #   ipsw headers kernel shim loader adt payload installer bootimage userland manager audio gpu rootimage rootsparse zip
 # NAME=value:
 #   IPSW=path          your own copy of the pinned IPSW (else it is downloaded from Apple into out/ipsw/)
 #   ANDROID_BOOT=path  a backup of your phone's boot partition: bootimage chains the loader in front of it
+#   STOCK_BOOT=path    Qualcomm: a backup of your phone's boot partition: bootimage puts its DTB into boot-xnu.img
 #   KERNEL=path        a kernel already built (skips the kernel build)
 #   TOUCH_FW=path      the phone's FW_NF_ILI7807S_*.bin into the payload (item ilifw); the zip's products otherwise
 #                      read it from the tail area, where the zip puts it; the development layout takes fw-touch/'s
@@ -237,7 +239,9 @@ step_payload() {
 	cmdline=$(merge "$(conf cmdline "$COMMON_CONF") $(conf cmdline "$DEV/device.conf")" "$(conf "${INSTALL}_cmdline" "$DEV/device.conf")")
 	python3 "$BM/tools/mkpayload.py" "$OUT/kernel" "$OUT/$TARGET_DEVICE.adt" "$P/xnu.bin" --cmdline "$cmdline" >/dev/null
 	echo "$cmdline" > "$P/cmdline"
-	size=$(stat -f %z "$P/xnu.bin") max=$(conf payload_max "$DEV/device.conf")
+	# for ABL the payload is the boot image's ramdisk as it is; mtkloader takes it in its xnup container, within its window
+	[ "$BOOT" = lk-chain ] || return 0
+	size=$(stat -f %z "$P/xnu.bin") max=$(req payload_max)
 	[ "$size" -lt $((max)) ] || { echo "mka: xnu.bin: $size bytes, over $max" >&2; exit 1; }
 	c=$KTOP/common
 	kver=mapple-$SOC-g$(git -C "$c" rev-parse --short=8 HEAD)
@@ -415,7 +419,7 @@ step_rootimage() {
 	local img=$OUT/system.img
 	if [ ! -f "$img" ] || [ -n "$(find "$OUT/root" -newer "$img" -print -quit)" ]; then
 		echo "mka: the root image needs sudo. Run, then mka again:"
-		echo "  rm -f $img; sudo $BM/tools/mkiosroot-macos.sh $IPSW_FILE $img $(conf root_size "$DEV/device.conf") $TARGET_DEVICE $OUT/root"
+		echo "  rm -f $img; sudo $BM/tools/mkiosroot-macos.sh $IPSW_FILE $img $(req root_size) $TARGET_DEVICE $OUT/root"
 		exit 2
 	fi
 }
@@ -462,9 +466,12 @@ sys.exit(open(sys.argv[2]).read().split("\n")[2] != "blocks %d" % struct.unpack(
 }
 
 for t in $targets; do
-	case $t in
-	mapple) set -- ipsw headers kernel shim loader adt payload installer bootimage userland manager audio gpu rootimage rootsparse zip ;;
-	ipsw|headers|kernel|shim|loader|adt|payload|installer|bootimage|userland|manager|audio|gpu|rootimage|rootsparse|zip) set -- "$t" ;;
+	case $SOC_VENDOR/$t in
+	mediatek/mapple) set -- ipsw headers kernel shim loader adt payload installer bootimage userland manager audio gpu rootimage rootsparse zip ;;
+	# no mtkloader, mapple-install or recovery zip (ABL boots the boot image from fastboot), no Mali GPU
+	qcom/mapple) set -- ipsw headers kernel shim adt payload bootimage userland manager audio rootimage rootsparse ;;
+	qcom/loader|qcom/installer|qcom/gpu|qcom/zip) echo "mka: $t is MediaTek's (LK, mtkloader, Mali)" >&2; exit 1 ;;
+	*/ipsw|*/headers|*/kernel|*/shim|*/loader|*/adt|*/payload|*/installer|*/bootimage|*/userland|*/manager|*/audio|*/gpu|*/rootimage|*/rootsparse|*/zip) set -- "$t" ;;
 	*) echo "mka: no target $t" >&2; exit 1 ;;
 	esac
 	for s in "$@"; do say "$s"; "step_$s"; done
