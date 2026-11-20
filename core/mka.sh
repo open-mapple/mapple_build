@@ -208,8 +208,12 @@ step_adt() {
 	local resize=
 	# device.conf's resize 1: the display resize on by default (the kernel reads /chosen; mp_fb_rsz overrides it)
 	[ "$(conf resize "$DEV/device.conf")" != 1 ] || resize=--resize
+	# the SoC's values from tools/soc/, the phone's from its device repository
+	need "$BM/tools/soc/$SOC.py" "no SoC file for $SOC"
+	need "$DEV/adt.py" "the device's device tree values"
 	# shellcheck disable=SC2046
-	D22AP_ADT=$OBJ/headers/d22ap.adt python3 "$BM/tools/mkadt.py" "$OUT/$TARGET_DEVICE.adt" $(conf adt "$DEV/device.conf") $resize
+	D22AP_ADT=$OBJ/headers/d22ap.adt python3 "$BM/tools/mkadt.py" "$OUT/$TARGET_DEVICE.adt" --soc="$BM/tools/soc/$SOC.py" \
+		--device="$DEV/adt.py" $(conf adt "$DEV/device.conf") $resize
 }
 
 step_payload() {
